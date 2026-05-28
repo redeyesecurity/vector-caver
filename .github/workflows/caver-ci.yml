@@ -1,0 +1,50 @@
+name: caver CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fork-integrity:
+    name: fork integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: FORK.md exists
+        run: test -f FORK.md
+
+  caver-crates:
+    name: caver crates (fmt / clippy / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if no caver workspace
+        id: check
+        run: |
+          if [ ! -f caver/Cargo.toml ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.skip != 'true'
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.skip != 'true'
+        with:
+          workspaces: caver -> target
+      - name: fmt
+        if: steps.check.outputs.skip != 'true'
+        run: cargo fmt --manifest-path caver/Cargo.toml --all -- --check
+      - name: clippy
+        if: steps.check.outputs.skip != 'true'
+        working-directory: caver
+        run: cargo clippy --workspace -- -D warnings
+      - name: test
+        if: steps.check.outputs.skip != 'true'
+        working-directory: caver
+        run: cargo test --workspace
