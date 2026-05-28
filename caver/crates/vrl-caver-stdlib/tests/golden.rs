@@ -1,9 +1,13 @@
-//! Validates that every caver/tests/golden/<class_uid>/ fixture directory
-//! contains valid, well-formed OCSF JSON for both in.json and out.json.
+//! Golden-fixture tests for vrl-caver-stdlib OCSF normalization.
+//!
+//! Two test suites:
+//!   golden_fixtures_are_valid — structural lint (all fixtures have required fields)
+//!   golden_{class_uid} — snapshot tests that call normalize() and diff vs out.json
 //!
 //! Run with: cargo test --manifest-path caver/Cargo.toml
 
 use std::path::PathBuf;
+use vrl_caver_stdlib::ocsf;
 
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -93,4 +97,39 @@ fn golden_fixtures_are_valid() {
         dir.display()
     );
     println!("golden: validated {checked} OCSF class fixture(s)");
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot tests — call normalize() and assert output matches out.json
+// ---------------------------------------------------------------------------
+
+fn run_normalize_snapshot(class_uid: u32) {
+    let dir = golden_dir().join(class_uid.to_string());
+    let in_val = load_json(&dir.join("in.json"));
+    let expected = load_json(&dir.join("out.json"));
+    let actual = ocsf::normalize(&in_val);
+    assert_eq!(
+        actual,
+        expected,
+        "normalize() mismatch for class_uid {class_uid}\n\
+         actual:\n{}\n\
+         expected:\n{}",
+        serde_json::to_string_pretty(&actual).unwrap(),
+        serde_json::to_string_pretty(&expected).unwrap(),
+    );
+}
+
+#[test]
+fn golden_4002_okta_authentication() {
+    run_normalize_snapshot(4002);
+}
+
+#[test]
+fn golden_3003_nginx_http_activity() {
+    run_normalize_snapshot(3003);
+}
+
+#[test]
+fn golden_5001_sysmon_process_activity() {
+    run_normalize_snapshot(5001);
 }

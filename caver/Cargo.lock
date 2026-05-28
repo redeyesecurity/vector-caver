@@ -375,6 +375,8 @@ dependencies = [
  "thiserror",
  "ureq",
 ]
+name = "caver-sink-search-peer"
+version = "0.1.0"
 
 [[package]]
 name = "caver-source-uf-compat"
@@ -1782,6 +1784,8 @@ name = "vrl-caver-stdlib"
 version = "0.1.0"
 name = "vrl-caver-stdlib"
 version = "0.6.0"
+name = "vrl-caver-stdlib"
+version = "0.1.0"
 dependencies = [
  "serde_json",
 ]

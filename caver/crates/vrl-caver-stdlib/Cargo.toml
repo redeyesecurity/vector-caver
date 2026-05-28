@@ -9,6 +9,6 @@ license.workspace = true
 name = "vrl_caver_stdlib"
 
 [dependencies]
+serde_json = "1"
 
 [dev-dependencies]
-serde_json = "1"
