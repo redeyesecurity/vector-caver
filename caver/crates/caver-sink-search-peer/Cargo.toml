@@ -1,0 +1,11 @@
+[package]
+name = "caver-sink-search-peer"
+description = "gRPC sink feeding RES-splunk-caver as a live search peer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "caver_sink_search_peer"
+
+[dependencies]

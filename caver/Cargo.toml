@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vrl-caver-stdlib",
+    "crates/caver-source-uf-compat",
+    "crates/caver-sink-search-peer",
+    "crates/caver-ottl-funcs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
