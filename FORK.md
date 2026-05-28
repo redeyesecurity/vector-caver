@@ -38,3 +38,14 @@ to minimize merge conflicts on upstream syncs.
 
 See [caver-collector#61](https://github.com/redeyesecurity/caver-collector/issues/61)
 for the project tracking issue.
+
+## About
+
+Built by [RedEye Security](https://redeyesecurity.com) as part of
+[caver](https://etairos.ai/caver), a Splunk-compatible security data platform
+with built-in OCSF normalization, CAVERN detection rules, and SLAM SOAR.
+
+caver-collector uses this fork as its Vector pipeline backend, extending Vector
+with caver-native sources, sinks, and VRL functions for security telemetry.
+
+Development assisted by [Claude Code](https://claude.ai/code) (Anthropic).

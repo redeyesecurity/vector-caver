@@ -1,6 +1,5 @@
 {
   "_vendor": "okta",
-  "_raw": "2026-05-28T10:00:00.000Z",
   "eventType": "user.authentication.sso",
   "published": "2026-05-28T10:00:00.000Z",
   "severity": "INFO",
