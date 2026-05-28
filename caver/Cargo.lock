@@ -901,6 +901,24 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 [[package]]
  "hashbrown",
 ]
+name = "caver-ops"
+version = "0.6.0"
+dependencies = [
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "caver-ottl-funcs"
+version = "0.6.0"
+
+[[package]]
+name = "caver-sink-search-peer"
+version = "0.6.0"
+
+[[package]]
+name = "caver-source-uf-compat"
+version = "0.6.0"
 
 [[package]]
 name = "itoa"
@@ -1762,6 +1780,8 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "vrl-caver-stdlib"
 version = "0.1.0"
+name = "vrl-caver-stdlib"
+version = "0.6.0"
 dependencies = [
  "serde_json",
 ]
