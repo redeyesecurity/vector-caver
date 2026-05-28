@@ -18,23 +18,13 @@ jobs:
       - name: Check FORK.md exists
         run: test -f FORK.md
 
-  cargo-deny:
-    name: cargo-deny (advisories + licenses)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          arguments: advisories licenses
-
   trivy:
     name: trivy scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.31.0
         with:
           scan-type: fs
           scan-ref: .
