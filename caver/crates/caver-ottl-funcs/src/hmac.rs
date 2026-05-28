@@ -6,8 +6,8 @@
 //!   `hmac_sha256_hex(key, data)` → `String` (64 lowercase hex chars)
 //!   `hmac_token(key, value)` → `String` (16-char hex pseudonym)
 
-use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -64,8 +64,13 @@ mod tests {
 
     #[test]
     fn sha256_nist_448bit() {
-        let h = hex::encode(sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"));
-        assert_eq!(h, "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+        let h = hex::encode(sha256(
+            b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+        ));
+        assert_eq!(
+            h,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
     }
 
     // RFC 4231 HMAC-SHA256 test vectors
@@ -73,13 +78,19 @@ mod tests {
     fn hmac_sha256_rfc4231_case1() {
         let key = [0x0bu8; 20];
         let mac = hex::encode(hmac_sha256(&key, b"Hi There"));
-        assert_eq!(mac, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+        assert_eq!(
+            mac,
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
     }
 
     #[test]
     fn hmac_sha256_rfc4231_case2() {
         let mac = hex::encode(hmac_sha256(b"Jefe", b"what do ya want for nothing?"));
-        assert_eq!(mac, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        assert_eq!(
+            mac,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 
     #[test]

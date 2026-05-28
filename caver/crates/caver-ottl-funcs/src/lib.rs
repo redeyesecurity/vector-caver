@@ -5,6 +5,6 @@
 //!   `enrich` — enrichment table lookup (JSON sidecar → field expansion)
 //!   `ocsf`   — OCSF field validation + required-field checks per class_uid
 
-pub mod hmac;
 pub mod enrich;
+pub mod hmac;
 pub mod ocsf;

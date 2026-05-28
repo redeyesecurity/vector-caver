@@ -187,7 +187,7 @@ mod tests {
         let index = build_index(&table, "ip");
         // Verify sorted order
         for i in 1..index.len() {
-            assert!(index[i-1].0 <= index[i].0);
+            assert!(index[i - 1].0 <= index[i].0);
         }
     }
 }
