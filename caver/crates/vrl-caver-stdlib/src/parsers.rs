@@ -145,32 +145,32 @@ fn normalise_zeek_json(v: Value, log_type: &str) -> Value {
 
     match log_type {
         "conn" => {
-            out["service"]     = v.get("service").cloned().unwrap_or(Value::Null);
-            out["duration"]    = v.get("duration").cloned().unwrap_or(Value::Null);
-            out["orig_bytes"]  = v.get("orig_bytes").cloned().unwrap_or(Value::Null);
-            out["resp_bytes"]  = v.get("resp_bytes").cloned().unwrap_or(Value::Null);
-            out["conn_state"]  = v.get("conn_state").cloned().unwrap_or(Value::Null);
-            out["missed_bytes"]= v.get("missed_bytes").cloned().unwrap_or(Value::Null);
+            out["service"] = v.get("service").cloned().unwrap_or(Value::Null);
+            out["duration"] = v.get("duration").cloned().unwrap_or(Value::Null);
+            out["orig_bytes"] = v.get("orig_bytes").cloned().unwrap_or(Value::Null);
+            out["resp_bytes"] = v.get("resp_bytes").cloned().unwrap_or(Value::Null);
+            out["conn_state"] = v.get("conn_state").cloned().unwrap_or(Value::Null);
+            out["missed_bytes"] = v.get("missed_bytes").cloned().unwrap_or(Value::Null);
         }
         "dns" => {
-            out["query"]  = v.get("query").cloned().unwrap_or(Value::Null);
-            out["qtype"]  = v.get("qtype_name").cloned().unwrap_or(Value::Null);
-            out["rcode"]  = v.get("rcode_name").cloned().unwrap_or(Value::Null);
-            out["answers"]= v.get("answers").cloned().unwrap_or(Value::Null);
+            out["query"] = v.get("query").cloned().unwrap_or(Value::Null);
+            out["qtype"] = v.get("qtype_name").cloned().unwrap_or(Value::Null);
+            out["rcode"] = v.get("rcode_name").cloned().unwrap_or(Value::Null);
+            out["answers"] = v.get("answers").cloned().unwrap_or(Value::Null);
         }
         "http" => {
-            out["method"]      = v.get("method").cloned().unwrap_or(Value::Null);
-            out["host"]        = v.get("host").cloned().unwrap_or(Value::Null);
-            out["uri"]         = v.get("uri").cloned().unwrap_or(Value::Null);
+            out["method"] = v.get("method").cloned().unwrap_or(Value::Null);
+            out["host"] = v.get("host").cloned().unwrap_or(Value::Null);
+            out["uri"] = v.get("uri").cloned().unwrap_or(Value::Null);
             out["status_code"] = v.get("status_code").cloned().unwrap_or(Value::Null);
-            out["user_agent"]  = v.get("user_agent").cloned().unwrap_or(Value::Null);
-            out["request_body_len"]  = v.get("request_body_len").cloned().unwrap_or(Value::Null);
+            out["user_agent"] = v.get("user_agent").cloned().unwrap_or(Value::Null);
+            out["request_body_len"] = v.get("request_body_len").cloned().unwrap_or(Value::Null);
             out["response_body_len"] = v.get("response_body_len").cloned().unwrap_or(Value::Null);
         }
         "ssl" => {
             out["server_name"] = v.get("server_name").cloned().unwrap_or(Value::Null);
-            out["version"]     = v.get("version").cloned().unwrap_or(Value::Null);
-            out["cipher"]      = v.get("cipher").cloned().unwrap_or(Value::Null);
+            out["version"] = v.get("version").cloned().unwrap_or(Value::Null);
+            out["cipher"] = v.get("cipher").cloned().unwrap_or(Value::Null);
             out["established"] = v.get("established").cloned().unwrap_or(Value::Null);
         }
         _ => {}
@@ -237,7 +237,9 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
                 "status_code": fields[15].parse::<u16>().ok(),
             })
         }
-        _ => json!({"error": format!("unsupported TSV log_type '{log_type}' or wrong column count")}),
+        _ => {
+            json!({"error": format!("unsupported TSV log_type '{log_type}' or wrong column count")})
+        }
     }
 }
 
@@ -251,23 +253,22 @@ pub fn parse_winevent(raw: &str) -> Value {
     let mut out = json!({});
 
     // System section
-    out["event_id"]   = extract_xml_text(raw, "EventID").map_or(Value::Null, |s| {
+    out["event_id"] = extract_xml_text(raw, "EventID").map_or(Value::Null, |s| {
         s.parse::<u64>().map(|n| json!(n)).unwrap_or(json!(s))
     });
-    out["time_created"] = extract_xml_attr(raw, "TimeCreated", "SystemTime")
-        .map_or(Value::Null, |s| json!(s));
-    out["computer"]   = extract_xml_text(raw, "Computer").map_or(Value::Null, |s| json!(s));
-    out["channel"]    = extract_xml_text(raw, "Channel").map_or(Value::Null, |s| json!(s));
-    out["provider"]   = extract_xml_attr(raw, "Provider", "Name")
-        .map_or(Value::Null, |s| json!(s));
-    out["level"]      = extract_xml_text(raw, "Level").map_or(Value::Null, |s| {
+    out["time_created"] =
+        extract_xml_attr(raw, "TimeCreated", "SystemTime").map_or(Value::Null, |s| json!(s));
+    out["computer"] = extract_xml_text(raw, "Computer").map_or(Value::Null, |s| json!(s));
+    out["channel"] = extract_xml_text(raw, "Channel").map_or(Value::Null, |s| json!(s));
+    out["provider"] = extract_xml_attr(raw, "Provider", "Name").map_or(Value::Null, |s| json!(s));
+    out["level"] = extract_xml_text(raw, "Level").map_or(Value::Null, |s| {
         s.parse::<u64>().map(|n| json!(n)).unwrap_or(json!(s))
     });
-    out["task"]       = extract_xml_text(raw, "Task").map_or(Value::Null, |s| {
+    out["task"] = extract_xml_text(raw, "Task").map_or(Value::Null, |s| {
         s.parse::<u64>().map(|n| json!(n)).unwrap_or(json!(s))
     });
-    out["activity_id"] = extract_xml_attr(raw, "Correlation", "ActivityID")
-        .map_or(Value::Null, |s| json!(s));
+    out["activity_id"] =
+        extract_xml_attr(raw, "Correlation", "ActivityID").map_or(Value::Null, |s| json!(s));
 
     // EventData section: collect all <Data Name="field">value</Data> pairs
     let event_data = extract_event_data(raw);
@@ -348,9 +349,7 @@ fn parse_sysmon_object(ev: &Value) -> Value {
             .and_then(Value::as_str)
     };
 
-    let event_id: u64 = ev.get("event_id")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let event_id: u64 = ev.get("event_id").and_then(Value::as_u64).unwrap_or(0);
 
     let mut out = json!({
         "event_id": event_id,
@@ -391,24 +390,30 @@ fn parse_sysmon_object(ev: &Value) -> Value {
         }
         // NetworkConnect
         3 => {
-            out["src_ip"]    = get("SourceIp").map_or(Value::Null, |s| json!(s));
-            out["src_port"]  = get("SourcePort").and_then(|s| s.parse::<u16>().ok()).map_or(Value::Null, |p| json!(p));
-            out["dest_ip"]   = get("DestinationIp").map_or(Value::Null, |s| json!(s));
-            out["dest_port"] = get("DestinationPort").and_then(|s| s.parse::<u16>().ok()).map_or(Value::Null, |p| json!(p));
-            out["protocol"]  = get("Protocol").map_or(Value::Null, |s| json!(s));
+            out["src_ip"] = get("SourceIp").map_or(Value::Null, |s| json!(s));
+            out["src_port"] = get("SourcePort")
+                .and_then(|s| s.parse::<u16>().ok())
+                .map_or(Value::Null, |p| json!(p));
+            out["dest_ip"] = get("DestinationIp").map_or(Value::Null, |s| json!(s));
+            out["dest_port"] = get("DestinationPort")
+                .and_then(|s| s.parse::<u16>().ok())
+                .map_or(Value::Null, |p| json!(p));
+            out["protocol"] = get("Protocol").map_or(Value::Null, |s| json!(s));
             out["dest_hostname"] = get("DestinationHostname").map_or(Value::Null, |s| json!(s));
         }
         // DriverLoad (6) / ImageLoad (7)
         6 | 7 => {
             out["image_loaded"] = get("ImageLoaded").map_or(Value::Null, |s| json!(s));
-            out["hashes"]       = get("Hashes").map_or(Value::Null, parse_sysmon_hashes);
-            out["signed"]       = get("Signed").map(|s| json!(s.eq_ignore_ascii_case("true"))).unwrap_or(Value::Null);
-            out["signature"]    = get("Signature").map_or(Value::Null, |s| json!(s));
+            out["hashes"] = get("Hashes").map_or(Value::Null, parse_sysmon_hashes);
+            out["signed"] = get("Signed")
+                .map(|s| json!(s.eq_ignore_ascii_case("true")))
+                .unwrap_or(Value::Null);
+            out["signature"] = get("Signature").map_or(Value::Null, |s| json!(s));
         }
         // CreateRemoteThread (8)
         8 => {
-            out["source_image"]  = get("SourceImage").map_or(Value::Null, |s| json!(s));
-            out["target_image"]  = get("TargetImage").map_or(Value::Null, |s| json!(s));
+            out["source_image"] = get("SourceImage").map_or(Value::Null, |s| json!(s));
+            out["target_image"] = get("TargetImage").map_or(Value::Null, |s| json!(s));
             out["start_address"] = get("StartAddress").map_or(Value::Null, |s| json!(s));
         }
         _ => {}
@@ -537,7 +542,9 @@ fn redact_emails(s: &str) -> String {
             let mut end = i + 1;
             let mut saw_dot = false;
             while end < bytes.len() && (is_email_domain_char(bytes[end])) {
-                if bytes[end] == b'.' { saw_dot = true; }
+                if bytes[end] == b'.' {
+                    saw_dot = true;
+                }
                 end += 1;
             }
             if start < i && saw_dot {
@@ -571,15 +578,15 @@ fn redact_ssns(s: &str) -> String {
     let mut i = 0;
     while i + 10 < bytes.len() {
         // Pattern: 3 digits, dash, 2 digits, dash, 4 digits
-        if bytes[i..i+3].iter().all(|b| b.is_ascii_digit())
-            && bytes[i+3] == b'-'
-            && bytes[i+4..i+6].iter().all(|b| b.is_ascii_digit())
-            && bytes[i+6] == b'-'
-            && bytes[i+7..i+11].iter().all(|b| b.is_ascii_digit())
+        if bytes[i..i + 3].iter().all(|b| b.is_ascii_digit())
+            && bytes[i + 3] == b'-'
+            && bytes[i + 4..i + 6].iter().all(|b| b.is_ascii_digit())
+            && bytes[i + 6] == b'-'
+            && bytes[i + 7..i + 11].iter().all(|b| b.is_ascii_digit())
         {
             // Ensure not preceded or followed by a digit (avoid matching in longer numbers)
-            let before_ok = i == 0 || !bytes[i-1].is_ascii_digit();
-            let after_ok = i + 11 >= bytes.len() || !bytes[i+11].is_ascii_digit();
+            let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+            let after_ok = i + 11 >= bytes.len() || !bytes[i + 11].is_ascii_digit();
             if before_ok && after_ok {
                 out.push_str("[REDACTED-SSN]");
                 i += 11;
@@ -606,7 +613,7 @@ fn redact_phones(s: &str) -> String {
     while i < bytes.len() {
         // Try "(DDD) DDD-DDDD"
         if bytes[i] == b'(' && i + 14 < bytes.len() {
-            let slice = &bytes[i..i+14];
+            let slice = &bytes[i..i + 14];
             if slice[0] == b'('
                 && slice[1..4].iter().all(|b| b.is_ascii_digit())
                 && slice[4] == b')'
@@ -622,7 +629,7 @@ fn redact_phones(s: &str) -> String {
         }
         // Try "DDD-DDD-DDDD" or "DDD.DDD.DDDD"
         if i + 12 <= bytes.len() && bytes[i].is_ascii_digit() {
-            let slice = &bytes[i..i+12];
+            let slice = &bytes[i..i + 12];
             let sep = slice[3];
             if (sep == b'-' || sep == b'.')
                 && slice[0..3].iter().all(|b| b.is_ascii_digit())
@@ -630,8 +637,8 @@ fn redact_phones(s: &str) -> String {
                 && slice[7] == sep
                 && slice[8..12].iter().all(|b| b.is_ascii_digit())
             {
-                let before_ok = i == 0 || !bytes[i-1].is_ascii_digit();
-                let after_ok = i + 12 >= bytes.len() || !bytes[i+12].is_ascii_digit();
+                let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+                let after_ok = i + 12 >= bytes.len() || !bytes[i + 12].is_ascii_digit();
                 if before_ok && after_ok {
                     out.push_str("[REDACTED-PHONE]");
                     i += 12;

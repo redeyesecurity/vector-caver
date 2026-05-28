@@ -5,5 +5,5 @@
 //! - caver-collector#65: security parser functions
 
 pub mod ocsf;
-pub mod threat_intel;
 pub mod parsers;
+pub mod threat_intel;

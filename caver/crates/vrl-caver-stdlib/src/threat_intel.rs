@@ -46,25 +46,47 @@ fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
 fn is_private_v4(ip: [u8; 4]) -> bool {
     let [a, b, c, _d] = ip;
     // 10.0.0.0/8
-    if a == 10 { return true; }
+    if a == 10 {
+        return true;
+    }
     // 172.16.0.0/12
-    if a == 172 && (16..=31).contains(&b) { return true; }
+    if a == 172 && (16..=31).contains(&b) {
+        return true;
+    }
     // 192.168.0.0/16
-    if a == 192 && b == 168 { return true; }
+    if a == 192 && b == 168 {
+        return true;
+    }
     // 127.0.0.0/8 — loopback
-    if a == 127 { return true; }
+    if a == 127 {
+        return true;
+    }
     // 169.254.0.0/16 — link-local (APIPA)
-    if a == 169 && b == 254 { return true; }
+    if a == 169 && b == 254 {
+        return true;
+    }
     // 100.64.0.0/10 — shared address space (RFC 6598 / CGNAT)
-    if a == 100 && (64..=127).contains(&b) { return true; }
+    if a == 100 && (64..=127).contains(&b) {
+        return true;
+    }
     // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 — documentation (RFC 5737)
-    if a == 192 && b == 0 && c == 2 { return true; }
-    if a == 198 && b == 51 && c == 100 { return true; }
-    if a == 203 && b == 0 && c == 113 { return true; }
+    if a == 192 && b == 0 && c == 2 {
+        return true;
+    }
+    if a == 198 && b == 51 && c == 100 {
+        return true;
+    }
+    if a == 203 && b == 0 && c == 113 {
+        return true;
+    }
     // 0.0.0.0/8 — "this" network
-    if a == 0 { return true; }
+    if a == 0 {
+        return true;
+    }
     // 255.255.255.255 — limited broadcast
-    if ip == [255, 255, 255, 255] { return true; }
+    if ip == [255, 255, 255, 255] {
+        return true;
+    }
     false
 }
 
@@ -113,13 +135,21 @@ fn parse_ipv6(s: &str) -> Option<[u16; 8]> {
 
 fn is_private_v6(ip: [u16; 8]) -> bool {
     // ::1 — loopback
-    if ip == [0, 0, 0, 0, 0, 0, 0, 1] { return true; }
+    if ip == [0, 0, 0, 0, 0, 0, 0, 1] {
+        return true;
+    }
     // :: — unspecified
-    if ip == [0u16; 8] { return true; }
+    if ip == [0u16; 8] {
+        return true;
+    }
     // fc00::/7 — Unique Local Address (ULA)
-    if (ip[0] & 0xFE00) == 0xFC00 { return true; }
+    if (ip[0] & 0xFE00) == 0xFC00 {
+        return true;
+    }
     // fe80::/10 — link-local
-    if (ip[0] & 0xFFC0) == 0xFE80 { return true; }
+    if (ip[0] & 0xFFC0) == 0xFE80 {
+        return true;
+    }
     false
 }
 
@@ -141,7 +171,9 @@ pub fn attack_tactic_lookup(technique_id: &str) -> Value {
         .unwrap_or("")
         .to_string();
 
-    if let Some((_, tactic_id, tactic_name)) = TECHNIQUE_TO_TACTIC.iter().find(|(t, _, _)| *t == tid) {
+    if let Some((_, tactic_id, tactic_name)) =
+        TECHNIQUE_TO_TACTIC.iter().find(|(t, _, _)| *t == tid)
+    {
         json!({
             "tactic_id": tactic_id,
             "tactic_name": tactic_name,
