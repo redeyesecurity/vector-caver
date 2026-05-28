@@ -9,3 +9,9 @@ license.workspace = true
 name = "caver_ottl_funcs"
 
 [dependencies]
+serde_json = "1"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+
+[dev-dependencies]
