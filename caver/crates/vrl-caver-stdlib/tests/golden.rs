@@ -60,7 +60,10 @@ fn golden_fixtures_are_valid() {
         let in_path = class_dir.join("in.json");
         let out_path = class_dir.join("out.json");
 
-        assert!(in_path.exists(), "missing in.json for class_uid {class_uid}");
+        assert!(
+            in_path.exists(),
+            "missing in.json for class_uid {class_uid}"
+        );
         assert!(
             out_path.exists(),
             "missing out.json for class_uid {class_uid}"
