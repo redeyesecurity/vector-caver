@@ -1,0 +1,11 @@
+[package]
+name = "caver-source-uf-compat"
+description = "Splunk Universal Forwarder-compatible source for vector-caver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "caver_source_uf_compat"
+
+[dependencies]
