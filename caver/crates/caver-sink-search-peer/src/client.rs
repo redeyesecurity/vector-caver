@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{Config, PushError, format::format_batch};
+use crate::{format::format_batch, Config, PushError};
 
 /// HEC client. Created once; reused across batches.
 pub struct Client {
@@ -30,7 +30,12 @@ impl Client {
         let endpoint = format!("{}/services/collector", config.url.trim_end_matches('/'));
         let auth_header = format!("Splunk {token}");
 
-        Ok(Self { agent, endpoint, auth_header, batch_size: config.batch_size })
+        Ok(Self {
+            agent,
+            endpoint,
+            auth_header,
+            batch_size: config.batch_size,
+        })
     }
 
     /// Push `events` to caver, splitting into batches of `config.batch_size`.
@@ -122,7 +127,10 @@ mod tests {
     fn http_error_surfaced() {
         // We can't easily run a mock server in a no-std test environment,
         // so this just validates the error path through the type system.
-        let err = PushError::HttpError { status: 403, body: "forbidden".into() };
+        let err = PushError::HttpError {
+            status: 403,
+            body: "forbidden".into(),
+        };
         assert!(err.to_string().contains("403"));
     }
 }

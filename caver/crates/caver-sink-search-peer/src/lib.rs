@@ -33,9 +33,9 @@
 //! client.push_batch(&events).unwrap();
 //! ```
 
+pub mod client;
 pub mod error;
 pub mod format;
-pub mod client;
 
 pub use client::Client;
 pub use error::PushError;
