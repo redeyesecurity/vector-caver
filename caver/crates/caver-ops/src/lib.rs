@@ -11,6 +11,6 @@
 //! - `opamp`: OPAMP agent-registration stub — carries agent identity and labels
 //!   for eventual wire-up to the RES fleet UI.
 
-pub mod tls;
-pub mod reload;
 pub mod opamp;
+pub mod reload;
+pub mod tls;

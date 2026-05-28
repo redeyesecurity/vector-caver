@@ -43,7 +43,9 @@ impl TlsPolicy {
                 if is_encrypted(url) {
                     Ok(())
                 } else {
-                    Err(TlsError::PlaintextRejected { url: url.to_string() })
+                    Err(TlsError::PlaintextRejected {
+                        url: url.to_string(),
+                    })
                 }
             }
         }
@@ -52,9 +54,7 @@ impl TlsPolicy {
 
 fn is_encrypted(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
-    lower.starts_with("https://")
-        || lower.starts_with("grpcs://")
-        || lower.starts_with("tls://")
+    lower.starts_with("https://") || lower.starts_with("grpcs://") || lower.starts_with("tls://")
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,9 @@ mod tests {
 
     #[test]
     fn required_accepts_grpcs() {
-        assert!(TlsPolicy::Required.check("grpcs://fleet.internal:4317").is_ok());
+        assert!(TlsPolicy::Required
+            .check("grpcs://fleet.internal:4317")
+            .is_ok());
     }
 
     #[test]

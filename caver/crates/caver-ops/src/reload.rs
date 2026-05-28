@@ -42,7 +42,10 @@ impl ReloadEvent {
             ReloadEvent::Passed { config_path } => {
                 format!("config reload PASSED: {config_path}")
             }
-            ReloadEvent::Failed { config_path, reason } => {
+            ReloadEvent::Failed {
+                config_path,
+                reason,
+            } => {
                 format!("config reload FAILED: {config_path} — {reason}")
             }
         }
@@ -66,10 +69,7 @@ pub enum ValidateError {
 ///
 /// * `config_path` — path to the Vector config file (YAML or TOML).
 /// * `vector_bin` — path to the `vector` binary; pass `"vector"` to use `$PATH`.
-pub fn validate_config(
-    config_path: &str,
-    vector_bin: &str,
-) -> Result<ReloadEvent, ValidateError> {
+pub fn validate_config(config_path: &str, vector_bin: &str) -> Result<ReloadEvent, ValidateError> {
     if !Path::new(config_path).exists() {
         return Ok(ReloadEvent::Failed {
             config_path: config_path.to_string(),
@@ -113,7 +113,9 @@ mod tests {
 
     #[test]
     fn reload_event_passed_should_apply() {
-        let ev = ReloadEvent::Passed { config_path: "/etc/vector.yaml".into() };
+        let ev = ReloadEvent::Passed {
+            config_path: "/etc/vector.yaml".into(),
+        };
         assert!(ev.should_apply());
         assert!(ev.summary().contains("PASSED"));
     }
@@ -146,8 +148,9 @@ mod tests {
     #[test]
     fn summary_contains_path() {
         let path = "/etc/caver/vector.yaml";
-        let ev = ReloadEvent::Passed { config_path: path.into() };
+        let ev = ReloadEvent::Passed {
+            config_path: path.into(),
+        };
         assert!(ev.summary().contains(path));
     }
 }
-
