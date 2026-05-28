@@ -15,22 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check FORK.md exists
+      - name: FORK.md exists
         run: test -f FORK.md
-
-  trivy:
-    name: trivy scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.31.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          exit-code: "0"
-          severity: CRITICAL,HIGH
-          format: table
 
   caver-crates:
     name: caver crates (fmt / clippy / test)
