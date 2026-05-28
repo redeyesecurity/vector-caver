@@ -1,0 +1,50 @@
+{
+  "class_uid": 5001,
+  "class_name": "Process Activity",
+  "category_uid": 2,
+  "category_name": "System Activity",
+  "activity_id": 1,
+  "activity_name": "Launch",
+  "type_uid": 500101,
+  "time": 1748426400000,
+  "severity_id": 1,
+  "severity": "Informational",
+  "status_id": 1,
+  "status": "Success",
+  "metadata": {
+    "version": "1.3.0",
+    "product": {
+      "name": "Sysmon",
+      "vendor_name": "Microsoft"
+    }
+  },
+  "actor": {
+    "user": {
+      "name": "alice",
+      "domain": "DESKTOP-ABC"
+    },
+    "process": {
+      "uid": "{12345678-abcd-1234-abcd-000000000001}",
+      "pid": 2344,
+      "file": {
+        "path": "C:\\Windows\\System32\\powershell.exe",
+        "name": "powershell.exe"
+      },
+      "cmd_line": "powershell.exe -NoProfile -ExecutionPolicy Bypass"
+    }
+  },
+  "process": {
+    "uid": "{12345678-abcd-1234-abcd-123456789012}",
+    "pid": 4892,
+    "file": {
+      "path": "C:\\Windows\\System32\\cmd.exe",
+      "name": "cmd.exe",
+      "product": {
+        "name": "Microsoft Windows Operating System",
+        "vendor_name": "Microsoft Corporation",
+        "version": "10.0.19041.1"
+      }
+    },
+    "cmd_line": "cmd.exe /c whoami"
+  }
+}
