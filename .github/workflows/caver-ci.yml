@@ -1,0 +1,72 @@
+# caver-collector extensions CI
+# Runs on PRs to main and pushes to main.
+# Scoped to caver/ subdirectory where all RedEye-specific crates live.
+# Until caver crates exist, only cargo-deny + trivy + fork-integrity checks run.
+
+name: caver CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Dependency license + advisory audit (whole workspace; lightweight)
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans
+
+  # Filesystem vulnerability scan
+  trivy:
+    name: trivy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+  # Fork integrity — FORK.md must be present on main
+  fork-integrity:
+    name: fork integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check FORK.md exists
+        run: test -f FORK.md || (echo "FORK.md missing from main branch" && exit 1)
+
+  # caver crate tests — only runs when caver/ workspace exists
+  caver-crates:
+    name: caver crates (fmt / clippy / test)
+    runs-on: ubuntu-latest
+    if: hashFiles('caver/Cargo.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: caver -> target
+      - name: fmt
+        run: cargo fmt --manifest-path caver/Cargo.toml --all -- --check
+      - name: clippy
+        working-directory: caver
+        run: cargo clippy --workspace -- -D warnings
+      - name: test
+        working-directory: caver
+        run: cargo test --workspace
