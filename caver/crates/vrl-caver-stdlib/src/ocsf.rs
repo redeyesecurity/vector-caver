@@ -328,10 +328,7 @@ fn normalize_nginx_http(event: &Value) -> Value {
         .unwrap_or("");
 
     // "GET /api/v1/users HTTP/1.1"
-    let request = event
-        .get("request")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let request = event.get("request").and_then(Value::as_str).unwrap_or("");
     let mut rp = request.splitn(3, ' ');
     let method = rp.next().unwrap_or("").to_string();
     let path = rp.next().unwrap_or("/").to_string();
@@ -424,10 +421,7 @@ fn normalize_sysmon_process(event: &Value) -> Value {
         .and_then(parse_sysmon_ts)
         .unwrap_or(0);
 
-    let image = event
-        .get("Image")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let image = event.get("Image").and_then(Value::as_str).unwrap_or("");
     let proc_uid = event
         .get("ProcessGuid")
         .and_then(Value::as_str)
@@ -445,15 +439,13 @@ fn normalize_sysmon_process(event: &Value) -> Value {
         .get("FileVersion")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let file_ver = file_ver_raw.split_whitespace().next().unwrap_or("").to_string();
-    let product_name = event
-        .get("Product")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let company = event
-        .get("Company")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let file_ver = file_ver_raw
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let product_name = event.get("Product").and_then(Value::as_str).unwrap_or("");
+    let company = event.get("Company").and_then(Value::as_str).unwrap_or("");
     let image_name = windows_basename(image).to_string();
 
     let parent_image = event
@@ -475,10 +467,7 @@ fn normalize_sysmon_process(event: &Value) -> Value {
         .unwrap_or("");
     let parent_name = windows_basename(parent_image).to_string();
 
-    let user_str = event
-        .get("User")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let user_str = event.get("User").and_then(Value::as_str).unwrap_or("");
     let (actor_user_name, actor_user_domain) =
         if let Some((domain, name)) = user_str.split_once('\\') {
             (name.to_string(), Some(domain.to_string()))
