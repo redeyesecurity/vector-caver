@@ -1,0 +1,37 @@
+{
+  "_vendor": "okta",
+  "_raw": "2026-05-28T10:00:00.000Z",
+  "eventType": "user.authentication.sso",
+  "published": "2026-05-28T10:00:00.000Z",
+  "severity": "INFO",
+  "actor": {
+    "id": "00u1abc2def3ghi4jkl5",
+    "type": "User",
+    "alternateId": "alice@example.com",
+    "displayName": "Alice Example"
+  },
+  "client": {
+    "ipAddress": "203.0.113.10",
+    "userAgent": {
+      "rawUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0",
+      "os": "Windows 10",
+      "browser": "CHROME"
+    },
+    "geographicalContext": {
+      "country": "US",
+      "state": "Tennessee",
+      "city": "Nashville"
+    }
+  },
+  "outcome": {
+    "result": "SUCCESS",
+    "reason": null
+  },
+  "target": [
+    {
+      "id": "0oa1abc2def3ghi",
+      "type": "AppInstance",
+      "displayName": "Salesforce"
+    }
+  ]
+}

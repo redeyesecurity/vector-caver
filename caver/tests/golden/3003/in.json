@@ -1,0 +1,13 @@
+{
+  "_vendor": "nginx",
+  "remote_addr": "198.51.100.42",
+  "time_local": "28/May/2026:10:00:00 +0000",
+  "request": "GET /api/v1/users HTTP/1.1",
+  "status": "200",
+  "body_bytes_sent": "1843",
+  "http_referer": "https://app.example.com/dashboard",
+  "http_user_agent": "python-requests/2.31.0",
+  "request_time": "0.023",
+  "upstream_response_time": "0.022",
+  "http_x_forwarded_for": "198.51.100.42"
+}

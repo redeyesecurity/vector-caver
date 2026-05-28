@@ -1,0 +1,19 @@
+{
+  "_vendor": "sysmon",
+  "EventID": 1,
+  "UtcTime": "2026-05-28 10:00:00.000",
+  "ProcessGuid": "{12345678-abcd-1234-abcd-123456789012}",
+  "ProcessId": "4892",
+  "Image": "C:\\Windows\\System32\\cmd.exe",
+  "FileVersion": "10.0.19041.1 (WinBuild.160101.0800)",
+  "Description": "Windows Command Processor",
+  "Product": "Microsoft Windows Operating System",
+  "Company": "Microsoft Corporation",
+  "CommandLine": "cmd.exe /c whoami",
+  "CurrentDirectory": "C:\\Users\\alice\\",
+  "User": "DESKTOP-ABC\\alice",
+  "ParentProcessGuid": "{12345678-abcd-1234-abcd-000000000001}",
+  "ParentProcessId": "2344",
+  "ParentImage": "C:\\Windows\\System32\\powershell.exe",
+  "ParentCommandLine": "powershell.exe -NoProfile -ExecutionPolicy Bypass"
+}

@@ -1,0 +1,43 @@
+{
+  "class_uid": 4002,
+  "class_name": "Authentication",
+  "category_uid": 3,
+  "category_name": "Identity & Access Management",
+  "activity_id": 1,
+  "activity_name": "Logon",
+  "type_uid": 400201,
+  "time": 1748426400000,
+  "severity_id": 1,
+  "severity": "Informational",
+  "status_id": 1,
+  "status": "Success",
+  "metadata": {
+    "version": "1.3.0",
+    "product": {
+      "name": "Okta",
+      "vendor_name": "Okta"
+    },
+    "profiles": [
+      "security_control"
+    ]
+  },
+  "user": {
+    "uid": "00u1abc2def3ghi4jkl5",
+    "name": "alice@example.com",
+    "full_name": "Alice Example",
+    "type_id": 1
+  },
+  "src_endpoint": {
+    "ip": "203.0.113.10",
+    "os": {
+      "name": "Windows 10",
+      "type_id": 100
+    }
+  },
+  "app": {
+    "uid": "0oa1abc2def3ghi",
+    "name": "Salesforce"
+  },
+  "auth_protocol_id": 99,
+  "logon_type_id": 99
+}
