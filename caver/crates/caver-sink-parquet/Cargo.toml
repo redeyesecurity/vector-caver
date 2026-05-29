@@ -1,0 +1,17 @@
+[package]
+name = "caver-sink-parquet"
+description = "OCSF-partitioned Parquet sink to S3/MinIO for the caver lake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "caver_sink_parquet"
+
+[dependencies]
+arrow = { version = "55", features = ["ipc"] }
+parquet = { version = "55", features = ["snap"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"] }
+uuid = { version = "1", features = ["v4"] }
+thiserror = "1"

@@ -5,6 +5,7 @@ members = [
     "crates/caver-source-uf-compat",
     "crates/caver-sink-search-peer",
     "crates/caver-ottl-funcs",
+    "crates/caver-sink-parquet",
 ]
 
 [workspace.package]
