@@ -193,7 +193,7 @@ fn outcome_to_status(result: &str) -> (u32, &'static str) {
 fn http_status_to_ocsf(code: u32) -> (u32, &'static str) {
     match code {
         200..=299 => (1, "Success"),
-        400..=499 | 500..=599 => (2, "Failure"),
+        400..=599 => (2, "Failure"),
         _ => (0, "Unknown"),
     }
 }
@@ -212,7 +212,7 @@ fn windows_os_type_id(os_name: &str) -> u32 {
 }
 
 fn windows_basename(path: &str) -> &str {
-    path.rsplit(|c| c == '\\' || c == '/')
+    path.rsplit(['\\', '/'])
         .next()
         .unwrap_or(path)
 }
