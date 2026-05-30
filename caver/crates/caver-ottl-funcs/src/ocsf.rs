@@ -302,7 +302,7 @@ pub fn validate(event: &Value, class_uid: u32) -> Result<(), Vec<String>> {
 
     // Also check that class_uid in the event matches the expected value
     if let Some(uid_val) = event.get("class_uid") {
-        if uid_val.as_u64().map_or(true, |u| u != class_uid as u64) {
+        if uid_val.as_u64().is_none_or(|u| u != class_uid as u64) {
             missing.push(format!("class_uid mismatch: expected {class_uid}"));
         }
     }

@@ -16,7 +16,7 @@ pub fn lookup<'a>(table: &'a Value, key_field: &str, key_value: &str) -> Option<
     table.as_array()?.iter().find(|row| {
         row.get(key_field)
             .and_then(Value::as_str)
-            .map_or(false, |v| v == key_value)
+            .is_some_and(|v| v == key_value)
     })
 }
 
