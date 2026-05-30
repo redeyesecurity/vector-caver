@@ -9,3 +9,9 @@ license.workspace = true
 name = "caver_sink_search_peer"
 
 [dependencies]
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+thiserror = "1"
+
+[dev-dependencies]
+mockito = "1"
