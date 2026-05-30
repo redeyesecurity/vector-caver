@@ -1,0 +1,15 @@
+[package]
+name = "caver-ops"
+description = "Operational helpers: mTLS enforcement, config-reload monitoring, OPAMP registration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "caver_ops"
+
+[dependencies]
+thiserror = "1"
+serde_json = "1"
+
+[dev-dependencies]

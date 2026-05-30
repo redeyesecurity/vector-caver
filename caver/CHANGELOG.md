@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0] - 2026-05-28
+
+### Added
+- `caver-ops`: Operational helpers crate (mTLS enforcement, config-reload monitoring, OPAMP identity)
+  - `tls::TlsPolicy` — `Required` rejects HTTP/gRPC plaintext; `Permissive` allows (dev/test default)
+  - `reload::validate_config` — shells out to `vector validate`; returns `ReloadEvent::Passed` or `Failed`
+  - `reload::ReloadEvent` — structured outcome with `should_apply()` + `summary()` for logging/alerting
+  - `opamp::AgentIdentity` — agent UUID, tenant_id, site, pool (Edge/Aggregator/Replay), version
+  - `opamp::AgentIdentity::to_attributes()` — serializes for OPAMP `AgentDescription.identifying_attributes`
+  - 15 tests (14 unit + 1 doc) all passing
+
 ## [0.5.0] - 2026-05-28
 
 ### Added
