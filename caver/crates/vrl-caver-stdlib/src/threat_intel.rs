@@ -115,7 +115,7 @@ fn parse_ipv6(s: &str) -> Option<[u16; 8]> {
         } else {
             halves[0].split(':').collect()
         };
-        let right: Vec<&str> = if halves.get(1).map_or(true, |r| r.is_empty()) {
+        let right: Vec<&str> = if halves.get(1).is_none_or(|r| r.is_empty()) {
             vec![]
         } else {
             halves[1].split(':').collect()
