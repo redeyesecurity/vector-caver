@@ -12,7 +12,7 @@ env:
 jobs:
   fork-integrity:
     name: fork integrity
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, X64]
     steps:
       - uses: actions/checkout@v4
       - name: FORK.md exists
@@ -20,7 +20,7 @@ jobs:
 
   caver-crates:
     name: caver crates (fmt / clippy / test)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, X64]
     steps:
       - uses: actions/checkout@v4
       - name: Skip if no caver workspace
