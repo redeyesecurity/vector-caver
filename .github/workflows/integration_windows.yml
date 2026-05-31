@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: vector-linux
     permissions:
       contents: read
     outputs:
@@ -49,7 +49,7 @@ jobs:
 
   test-integration-windows:
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: vector-linux
     needs: run-test-integration-windows
     steps:
       - run: |

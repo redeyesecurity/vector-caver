@@ -31,7 +31,7 @@ env:
 
 jobs:
   test-integration:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 40
     permissions:
       contents: read

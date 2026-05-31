@@ -83,7 +83,7 @@ jobs:
       checkout_ref: ${{ inputs.ref }}
 
   integration-tests:
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     permissions:
       contents: read
       id-token: write
@@ -203,7 +203,7 @@ jobs:
           if-no-files-found: ignore
 
   e2e-tests:
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     permissions:
       contents: read
       id-token: write
@@ -286,7 +286,7 @@ jobs:
 
   integration-test-suite:
     name: Integration Test Suite
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: always()
     needs:
       - changes

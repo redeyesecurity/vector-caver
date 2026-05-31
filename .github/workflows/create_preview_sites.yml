@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   create_preview_site:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     permissions:
       contents: read # Required for repository context

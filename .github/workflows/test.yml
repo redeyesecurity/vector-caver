@@ -29,7 +29,7 @@ jobs:
 
   check-fmt:
     name: Check code format
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.test-yml == 'true' || needs.changes.outputs.prettier == 'true' }}
     needs: changes
     steps:
@@ -42,7 +42,7 @@ jobs:
 
   check-clippy:
     name: Check clippy
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -68,7 +68,7 @@ jobs:
 
   check-scripts:
     name: Check scripts
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.scripts == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -82,7 +82,7 @@ jobs:
 
   check-events:
     name: Check events
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -96,7 +96,7 @@ jobs:
 
   check-licenses:
     name: Check that the 3rd-party license file is up to date
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -111,7 +111,7 @@ jobs:
 
   check-docs:
     name: Check Cue docs
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.cue == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -126,7 +126,7 @@ jobs:
 
   check-markdown:
     name: Check Markdown
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.markdown == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -139,7 +139,7 @@ jobs:
 
   check-generated-docs:
     name: Check Generated Docs
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.component_docs == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -154,7 +154,7 @@ jobs:
 
   check-rust-docs:
     name: Check Rust Docs
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -166,7 +166,7 @@ jobs:
 
   test-vrl:
     name: VRL - Linux
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.cue == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -180,7 +180,7 @@ jobs:
 
   build-vrl-playground:
     name: Build VRL Playground
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     if: ${{ needs.changes.outputs.source == 'true' || needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.test-yml == 'true' }}
     needs: changes
     steps:
@@ -196,7 +196,7 @@ jobs:
 
   all-checks:
     name: Test Suite
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     if: always()
     needs:
       - changes

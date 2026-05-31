@@ -61,7 +61,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     needs: build
     env:
       DISABLE_MOLD: true

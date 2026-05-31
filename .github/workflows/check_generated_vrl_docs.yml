@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: vector-linux
     permissions:
       contents: read
     outputs:
@@ -41,7 +41,7 @@ jobs:
   run-check-generated-vrl-docs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     permissions:
       contents: write
     steps:
@@ -127,7 +127,7 @@ jobs:
 
   check-generated-vrl-docs:
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: vector-linux
     needs: run-check-generated-vrl-docs
     steps:
       - run: |

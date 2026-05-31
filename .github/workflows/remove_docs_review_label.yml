@@ -17,7 +17,7 @@ env:
 jobs:
   remove_label:
     if: github.event.review.state == 'approved'
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     steps:
       - name: Check association, label, and remove
