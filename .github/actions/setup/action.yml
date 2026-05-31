@@ -183,7 +183,10 @@ runs:
         RUSTC_WRAPPER="${CARGO_BIN_DIR}/wrap-rustc"
         cat <<EOF >"$RUSTC_WRAPPER"
         #!/bin/sh
-        exec mold -run "\$@"
+        # mold = fast linker; sccache = shared compile cache (S3/MinIO) when present
+        # on the self-hosted runners. Falls back to plain mold where sccache is
+        # absent (e.g. hosted arm runners) so those still build. (self-hosted CI cache)
+        if command -v sccache >/dev/null 2>&1; then exec mold -run sccache "\$@"; else exec mold -run "\$@"; fi
         EOF
         chmod +x "$RUSTC_WRAPPER"
 
