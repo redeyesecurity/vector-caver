@@ -17,7 +17,9 @@ pub const DICT_COLUMNS: &[&str] = &[
 /// Build an Arrow RecordBatch from a slice of flat string-valued rows.
 /// All values are stored as Utf8 (string) with dictionary encoding on DICT_COLUMNS.
 /// Unknown columns pass through as plain Utf8.
-pub fn rows_to_record_batch(rows: &[HashMap<String, String>]) -> Result<RecordBatch, arrow::error::ArrowError> {
+pub fn rows_to_record_batch(
+    rows: &[HashMap<String, String>],
+) -> Result<RecordBatch, arrow::error::ArrowError> {
     // Collect ordered column names (stable ordering via BTreeSet).
     let mut col_set: BTreeSet<String> = BTreeSet::new();
     for row in rows {
@@ -44,10 +46,7 @@ pub fn rows_to_record_batch(rows: &[HashMap<String, String>]) -> Result<RecordBa
             // Dictionary-encode.
             let dict_arr = arrow::compute::cast(
                 &(Arc::new(string_arr) as ArrayRef),
-                &DataType::Dictionary(
-                    Box::new(DataType::Int32),
-                    Box::new(DataType::Utf8),
-                ),
+                &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
             )?;
             fields.push(Field::new(col, dict_arr.data_type().clone(), true));
             arrays.push(dict_arr);

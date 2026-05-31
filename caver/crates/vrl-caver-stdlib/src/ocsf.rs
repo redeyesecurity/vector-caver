@@ -212,9 +212,7 @@ fn windows_os_type_id(os_name: &str) -> u32 {
 }
 
 fn windows_basename(path: &str) -> &str {
-    path.rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(path)
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 
 // ---------------------------------------------------------------------------
