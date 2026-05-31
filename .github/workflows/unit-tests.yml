@@ -61,7 +61,7 @@ env:
 jobs:
   tests:
     name: Tests
-    runs-on: ubuntu-24.04-8core
+    runs-on: vector-linux
     permissions:
       contents: read
       id-token: write

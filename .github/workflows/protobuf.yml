@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   validate-protos:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     steps:
       # Run `git checkout`

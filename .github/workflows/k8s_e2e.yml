@@ -65,7 +65,7 @@ jobs:
 
   build-x86_64-unknown-linux-gnu:
     name: Build - x86_64-unknown-linux-gnu
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 45
     needs: changes
     # Run this job even if `changes` job is skipped
@@ -104,7 +104,7 @@ jobs:
   # See https://github.community/t/feature-request-and-use-case-example-to-allow-matrix-in-if-s/126067
   compute-k8s-test-plan:
     name: Compute K8s test plan
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     needs: changes
     # Run this job even if `changes` job is skipped
@@ -159,7 +159,7 @@ jobs:
 
   test-e2e-kubernetes:
     name: K8s ${{ matrix.kubernetes_version.version }} / ${{ matrix.container_runtime }} (${{ matrix.kubernetes_version.role }})
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 60
     needs:
       - build-x86_64-unknown-linux-gnu
@@ -245,7 +245,7 @@ jobs:
 
   final-result:
     name: K8s E2E Suite
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     needs:
       - changes

@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   run-make-command:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     permissions:
       contents: read
       id-token: write

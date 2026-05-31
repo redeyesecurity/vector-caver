@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     permissions:
       contents: read # Required by actions/checkout
       packages: write # Required to push test runner image to GitHub Container Registry

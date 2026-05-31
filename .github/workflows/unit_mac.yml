@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   unit-mac:
-    runs-on: macos-14-xlarge
+    runs-on: caver-mac
     timeout-minutes: 90
     steps:
       - name: Checkout branch

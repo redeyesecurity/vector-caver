@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   approval_check:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     permissions:
       contents: read # Required for repository context

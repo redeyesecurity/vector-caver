@@ -44,7 +44,7 @@ env:
 jobs:
   generate-publish-metadata:
     name: Generate Publish-related Metadata
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 15
     outputs:
       vector_version: ${{ steps.generate-publish-metadata.outputs.vector_version }}
@@ -421,7 +421,7 @@ jobs:
   publish-docker:
     name: Publish to Docker
     if: ${{ !inputs.skip_publish }}
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 15
     # Elevated permission required to push Docker images to GitHub Container Registry
     permissions:
@@ -483,7 +483,7 @@ jobs:
   publish-s3:
     name: Publish to S3
     if: ${{ !inputs.skip_publish }}
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 10
     needs:
       - generate-publish-metadata
@@ -522,7 +522,7 @@ jobs:
     name: Publish release to GitHub
     # We only publish to GitHub for versioned releases, not nightlies.
     if: ${{ !inputs.skip_publish && inputs.channel == 'release' }}
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 10
     # Elevated permission required to create GitHub releases and upload release assets
     permissions:
@@ -560,7 +560,7 @@ jobs:
 
   generate-sha256sum:
     name: Generate SHA256 checksums
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     needs:
       - generate-publish-metadata

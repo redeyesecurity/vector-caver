@@ -14,7 +14,7 @@ permissions:
 jobs:
   cross-linux:
     name: Cross - ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: 0

@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   test-install:
-    runs-on: ubuntu-24.04
+    runs-on: vector-linux
     timeout-minutes: 5
     steps:
       - name: Checkout branch
