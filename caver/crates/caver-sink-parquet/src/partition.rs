@@ -10,7 +10,5 @@ pub fn build_key(class_uid: &str, sensor_id: &str, ts: DateTime<Utc>) -> String 
     let hour = ts.format("%H");
     let ts_str = ts.format("%Y%m%dT%H%M%S");
     let file_id = &Uuid::new_v4().simple().to_string()[..12];
-    format!(
-        "{class_uid}/dt={date}/hour={hour}/sensor={sensor_id}/{ts_str}-{file_id}.parquet"
-    )
+    format!("{class_uid}/dt={date}/hour={hour}/sensor={sensor_id}/{ts_str}-{file_id}.parquet")
 }

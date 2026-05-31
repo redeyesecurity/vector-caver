@@ -152,7 +152,6 @@ impl ParquetSink {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,13 +166,22 @@ mod tests {
             cap2.lock().unwrap().push((bucket.into(), key.into(), body));
         });
 
-        let cfg = Config { batch_size: 2, ..Config::default() };
+        let cfg = Config {
+            batch_size: 2,
+            ..Config::default()
+        };
         let sink = ParquetSink::new(cfg, Some(put));
 
-        sink.send(HashMap::from([("class_uid".into(), "2003".into()), ("x".into(), "1".into())]));
+        sink.send(HashMap::from([
+            ("class_uid".into(), "2003".into()),
+            ("x".into(), "1".into()),
+        ]));
         assert_eq!(captured.lock().unwrap().len(), 0, "no flush yet");
 
-        sink.send(HashMap::from([("class_uid".into(), "2003".into()), ("x".into(), "2".into())]));
+        sink.send(HashMap::from([
+            ("class_uid".into(), "2003".into()),
+            ("x".into(), "2".into()),
+        ]));
         let puts = captured.lock().unwrap().len();
         assert_eq!(puts, 1, "flushed on batch_size=2");
 
@@ -190,7 +198,10 @@ mod tests {
             cap2.lock().unwrap().push(body);
         });
 
-        let cfg = Config { batch_size: 100, ..Config::default() };
+        let cfg = Config {
+            batch_size: 100,
+            ..Config::default()
+        };
         let sink = ParquetSink::new(cfg, Some(put));
 
         sink.send(HashMap::from([("class_uid".into(), "2003".into())]));

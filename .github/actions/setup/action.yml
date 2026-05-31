@@ -190,11 +190,18 @@ runs:
         EOF
         chmod +x "$RUSTC_WRAPPER"
 
-        # Now configure Cargo to use our rustc wrapper script.
-        cat <<EOF >>"$CARGO_OVERRIDE_CONF"
+        # Now configure Cargo to use our rustc wrapper script. Write it only
+        # once: on ephemeral hosted runners this file is fresh each job, but on
+        # a PERSISTENT self-hosted runner it survives between jobs and a blind
+        # append accumulates duplicate [build] blocks until the TOML no longer
+        # parses and every cargo command fails. (The wrapper path is stable, so
+        # one entry is enough; the wrap-rustc script itself is rewritten above.)
+        if ! grep -qs '^rustc-wrapper' "$CARGO_OVERRIDE_CONF"; then
+          cat <<EOF >>"$CARGO_OVERRIDE_CONF"
         [build]
         rustc-wrapper = "$RUSTC_WRAPPER"
         EOF
+        fi
 
     - name: Install protoc
       if: ${{ inputs.protoc == 'true' }}
