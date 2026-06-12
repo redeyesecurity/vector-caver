@@ -127,9 +127,23 @@ jobs:
           type = "demo_logs"
           format = "syslog"
 
+          # Caver VRL functions resolve from remap (caver-collector#904):
+          # validate compiles this source, so a binary missing the OCSF VRL
+          # framework fails here.
+          [transforms.ocsf]
+          type = "remap"
+          inputs = ["demo"]
+          source = '''
+          ev = parse_suricata_eve(s'{"event_type": "alert", "src_ip": "10.0.0.1"}')
+          .class_uid = ocsf_classify(ev)
+          .ocsf = ocsf_normalize(ev)
+          .entity = caver_entity_id({"hostname": "web01"}, "host")
+          .internal = is_internal_ip("10.0.0.1")
+          '''
+
           [sinks.lake]
           type = "caver_parquet"
-          inputs = ["demo"]
+          inputs = ["ocsf"]
           bucket = "ci-validate"
           endpoint = "http://127.0.0.1:1"
           access_key_env = "CAVER_CI_AK"
@@ -144,3 +158,11 @@ jobs:
         # otherwise never tested in CI (caver-collector#899 item 4). Reuses
         # the dependency cache from the build step above.
         run: cargo test --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap" --lib sinks::caver_parquet
+      - name: Caver VRL adapter tests
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
+        # The VRL adapter crate (lib/vector-vrl/caver-stdlib) and the
+        # registration tests in vector-vrl-functions also live in the root
+        # workspace (caver-collector#904). --no-default-features keeps
+        # vector-vrl-functions off its dnstap/vrl-metrics optionals here;
+        # the registration itself is unconditional.
+        run: cargo test --locked --no-default-features -p vector-vrl-caver-stdlib -p vector-vrl-functions
