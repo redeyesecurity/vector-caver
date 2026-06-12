@@ -13,8 +13,19 @@
   - All inner-sink interaction (batching, Parquet encode, signed PUT with retry
     backoff) runs under `spawn_blocking` — a slow object store cannot stall the
     async topology
-  - Logs are flattened to dotted-key string rows via `all_event_fields`
-  - `vector list` shows `caver_parquet`; a config naming it boots
+  - Logs are flattened to dotted-key string rows via `all_event_fields`;
+    scalar-root logs ship keyed as `message` instead of being dropped
+  - PUT/encode failures are surfaced at the Vector layer: the crate's
+    `dropped`/`put_errors` counters are diffed after every blocking call and
+    increments are logged at error level + emitted as
+    `component_discarded_events_total` (events ack at batch-accept time, so
+    this is the only failure signal)
+  - `build()` validates `batch_size >= 1` and `sensor_id` charset
+    (`[A-Za-z0-9._-]+`, it is embedded in the object key), and warns when
+    acknowledgements are enabled without a `dlq_path`
+  - `vector list` shows `caver_parquet`; a config naming it boots (CI runs
+    full `vector validate`, so `build()` is exercised; root build is
+    `--locked`)
 
 ### Changed
 - `caver-sink-parquet` no longer uses workspace-inherited `version`/`edition`/

@@ -56,7 +56,9 @@ pub struct CaverParquetConfig {
     /// Sensor identifier used in the lake partition path
     /// (`<class_uid>/dt=.../hour=.../sensor=<sensor_id>/...`).
     ///
-    /// Defaults to the collector host name.
+    /// Must match `[A-Za-z0-9._-]+` (it is embedded in the object key).
+    /// Defaults to the `HOSTNAME` environment variable, then `/etc/hostname`,
+    /// then the literal `collector`.
     #[configurable(metadata(docs::examples = "edge-01"))]
     pub sensor_id: Option<String>,
 
@@ -71,7 +73,10 @@ pub struct CaverParquetConfig {
 
     /// Local directory receiving failed batches as ndjson (dead-letter queue).
     ///
-    /// If unset, failed batches are dropped (counted in sink stats).
+    /// Events are acknowledged when accepted into a batch, **before** the
+    /// object PUT — a later PUT failure does not NACK them. Failed batches go
+    /// here; if unset they are dropped (logged at error level and counted in
+    /// `component_discarded_events_total`).
     #[configurable(metadata(docs::examples = "/var/lib/caver/dlq"))]
     pub dlq_path: Option<PathBuf>,
 
@@ -147,6 +152,32 @@ impl Default for CaverParquetConfig {
 #[typetag::serde(name = "caver_parquet")]
 impl SinkConfig for CaverParquetConfig {
     async fn build(&self, _cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
+        if self.batch_size == 0 {
+            return Err("`batch_size` must be at least 1".into());
+        }
+        if let Some(sensor_id) = &self.sensor_id {
+            // The sensor id is embedded raw in the object key; anything
+            // outside this set (`/`, `..`, spaces) breaks the lake layout or
+            // the SigV4 canonical path and 403s whole batches.
+            if sensor_id.is_empty()
+                || !sensor_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            {
+                return Err(format!(
+                    "`sensor_id` must match [A-Za-z0-9._-]+ (it is embedded in the object key), got {sensor_id:?}"
+                )
+                .into());
+            }
+        }
+        if self.acknowledgements.enabled() && self.dlq_path.is_none() {
+            warn!(
+                message = "`acknowledgements` are enabled but events are acked when accepted \
+                 into a batch, before the object PUT; without a `dlq_path` a failed PUT \
+                 drops the batch. Set `dlq_path` to make PUT failures recoverable."
+            );
+        }
+
         let s3_cfg = caver_sink_parquet::S3Config {
             endpoint: self.endpoint.clone(),
             region: self.region.clone(),
@@ -173,7 +204,7 @@ impl SinkConfig for CaverParquetConfig {
         }
         let parquet = Arc::new(caver_sink_parquet::ParquetSink::new(sink_cfg, Some(put_fn)));
 
-        let sink = CaverParquetSink::new(parquet);
+        let sink = CaverParquetSink::new(parquet, self.dlq_path.is_some());
         let healthcheck = future::ok(()).boxed();
 
         Ok((VectorSink::Stream(Box::new(sink)), healthcheck))

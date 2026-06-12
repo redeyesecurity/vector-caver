@@ -74,14 +74,24 @@ jobs:
         run: command -v protoc >/dev/null 2>&1 || brew install protobuf
       - name: Build minimal vector with caver_parquet
         if: steps.check.outputs.skip != 'true'
-        run: cargo build --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
+        # --locked: a stale committed Cargo.lock must fail here, not get
+        # silently rewritten on the runner.
+        run: cargo build --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
       - name: caver_parquet registered in `vector list`
         if: steps.check.outputs.skip != 'true'
         run: ./target/debug/vector list | grep -w caver_parquet
       - name: Config naming caver_parquet validates
         if: steps.check.outputs.skip != 'true'
+        # Full validate (no --no-environment) so SinkConfig::build actually
+        # runs: env-var + sensor_id + endpoint checks are exercised. build()
+        # does no I/O and the healthcheck is a no-op, so no store is needed.
+        # RUNNER_TEMP keeps the 9 runners sharing this box out of each
+        # other's way.
         run: |
-          cat > /tmp/caver-component-ci.toml <<'EOF'
+          mkdir -p "$RUNNER_TEMP/caver-ci-data"
+          cat > "$RUNNER_TEMP/caver-component-ci.toml" <<EOF
+          data_dir = "$RUNNER_TEMP/caver-ci-data"
+
           [sources.demo]
           type = "demo_logs"
           format = "syslog"
@@ -94,4 +104,4 @@ jobs:
           access_key_env = "CAVER_CI_AK"
           secret_key_env = "CAVER_CI_SK"
           EOF
-          CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate --no-environment /tmp/caver-component-ci.toml
+          CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate "$RUNNER_TEMP/caver-component-ci.toml"
