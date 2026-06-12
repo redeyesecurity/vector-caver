@@ -172,6 +172,11 @@ pub struct CaverParquetConfig {
     /// `flush_seconds` tick. Lower it (e.g. `15`) for freshness-sensitive
     /// deployments; keep the default where lake efficiency (fewer, larger
     /// objects) matters more.
+    ///
+    /// Migrating from the Python collector sink: there is no separate
+    /// `min_rows` knob here — the timer-path floor is `batch_size`. Python's
+    /// `min_rows: 0` (ship every tick regardless of age) maps to
+    /// `flush_max_age_seconds: 0`.
     #[serde(default = "default_flush_max_age_seconds")]
     pub flush_max_age_seconds: u64,
 

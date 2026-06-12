@@ -18,10 +18,17 @@
   - the thread holds only a `Weak` and stops via condvar
     (`stop_flusher()`, also joined on `Drop`); it never drains on stop —
     shutdown paths call `flush()` explicitly, which always ships
-    regardless of the floor
+    regardless of the floor. `stop_flusher()` detaches instead of
+    joining when the final `Arc` drop happens on the flusher thread
+    itself (it holds a strong `Arc` mid-tick; a self-join would panic
+    inside `Drop` — caught in PR #22 review, regression-tested)
   - `stats()` gains `timer_skips` (ticks that found a buffer too young)
   - the Vector sink rejects `flush_seconds = 0` at config build time
-    (it is the tick that applies the backstop, not a disable switch)
+    (it is the tick that applies the backstop, not a disable switch);
+    the crate clamps `0` to `1`
+  - migration note: no separate `min_rows` knob — the timer-path floor
+    is `batch_size`; Python `min_rows: 0` maps to
+    `flush_max_age_seconds: 0`
 
 ## [0.13.0] - 2026-06-12
 

@@ -45,7 +45,9 @@ pub struct Config {
     /// `flush_seconds`). The background flusher started by
     /// [`ParquetSink::start_flusher`] wakes this often; without it a
     /// below-`batch_size` buffer never ships until shutdown
-    /// (caver-collector#901).
+    /// (caver-collector#901). `0` is clamped to `1` by
+    /// [`ParquetSink::start_flusher`] (the Vector layer rejects it loudly
+    /// at config build time instead).
     pub flush_seconds: u64,
     /// Freshness backstop, in seconds (the Python sink's
     /// `flush_max_age_seconds`, caver-collector#888): a timer tick drains a
@@ -261,6 +263,13 @@ impl ParquetSink {
                             // stop_flusher() is never blocked on it.
                             drop(stopped);
                             let Some(sink) = weak.upgrade() else { return };
+                            // Known divergence from Python's try/except
+                            // _flush_loop: a panic in flush() would kill
+                            // this thread for the life of the process. The
+                            // prod flush path has no panicking call today
+                            // (transport/writer unwraps are test-only);
+                            // accepted rather than papered over with
+                            // catch_unwind.
                             sink.flush_if_aged();
                             drop(sink);
                             stopped = lock.lock().unwrap();
@@ -281,7 +290,21 @@ impl ParquetSink {
             *lock.lock().unwrap() = true;
             cvar.notify_all();
         }
-        if let Some(handle) = self.flusher.lock().unwrap().take() {
+        // Bind the guard explicitly: holding the handle lock across the
+        // join is what stops start_flusher() from resetting the stop flag
+        // while an old thread is still alive.
+        let mut flusher = self.flusher.lock().unwrap();
+        if let Some(handle) = flusher.take() {
+            // Self-join guard: the flusher holds a strong Arc for the
+            // duration of each tick's flush (between `upgrade` and `drop`),
+            // so it can end up running the FINAL Arc drop — then `Drop`
+            // calls stop_flusher() on the flusher thread itself, and
+            // joining would panic (pthread EDEADLK). The thread is already
+            // on its way out (it re-checks the stop flag, set above, right
+            // after dropping its Arc): detach instead.
+            if handle.thread().id() == std::thread::current().id() {
+                return;
+            }
             // The thread may be mid-flush; the join is bounded by the
             // transport's put_deadline_ms.
             let _ = handle.join();
@@ -650,6 +673,78 @@ mod tests {
         sink.start_flusher();
         assert!(sink.flusher.lock().unwrap().is_some());
         sink.stop_flusher();
+    }
+
+    /// Regression (PR #22 review): the flusher holds a strong `Arc` for the
+    /// duration of each tick's flush, so it can end up running the FINAL
+    /// `Arc` drop — `Drop` then calls `stop_flusher()` on the flusher
+    /// thread itself, which must detach rather than self-join (a self-join
+    /// is a pthread EDEADLK → panic inside `Drop`). The panic hook counts
+    /// panics on the named flusher thread; the marker `Arc` proves the sink
+    /// (and its captured `put_fn`) was fully dropped.
+    #[test]
+    fn final_arc_drop_on_flusher_thread_detaches_instead_of_self_joining() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        static FLUSHER_PANICS: AtomicUsize = AtomicUsize::new(0);
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().name() == Some("caver-parquet-flush") {
+                FLUSHER_PANICS.fetch_add(1, Ordering::SeqCst);
+            }
+            prev(info);
+        }));
+
+        // `entered` flips once the flusher is mid-PUT (holding its upgraded
+        // strong Arc); `release` then lets the PUT finish.
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let marker = Arc::new(());
+        let (e2, r2, m2) = (
+            Arc::clone(&entered),
+            Arc::clone(&release),
+            Arc::clone(&marker),
+        );
+        let put: PutFn = Arc::new(move |_b, _k, _body| {
+            let _held_until_sink_drop = &m2;
+            e2.store(true, Ordering::SeqCst);
+            let (lock, cvar) = &*r2;
+            let mut go = lock.lock().unwrap();
+            while !*go {
+                go = cvar.wait(go).unwrap();
+            }
+            Ok(())
+        });
+        let cfg = Config {
+            batch_size: 100,
+            flush_seconds: 1,
+            flush_max_age_seconds: 0,
+            ..Config::default()
+        };
+        let sink = Arc::new(ParquetSink::new(cfg, Some(put)));
+        sink.send(HashMap::from([("class_uid".into(), "2003".into())]));
+        sink.start_flusher();
+        assert!(
+            wait_for(Duration::from_secs(30), || entered.load(Ordering::SeqCst)),
+            "flusher never reached the PUT"
+        );
+        // The flusher's upgraded Arc is now the co-owner; make it the last.
+        drop(sink);
+        {
+            let (lock, cvar) = &*release;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+        // Fully dropped (the put_fn released the marker) and no panic on
+        // the flusher thread.
+        assert!(
+            wait_for(Duration::from_secs(30), || Arc::strong_count(&marker) == 1),
+            "sink was never dropped — flusher likely wedged"
+        );
+        assert_eq!(
+            FLUSHER_PANICS.load(Ordering::SeqCst),
+            0,
+            "self-join panic in Drop"
+        );
     }
 
     #[test]
