@@ -4,7 +4,7 @@ description = "OCSF-partitioned Parquet sink to S3/MinIO for the caver lake"
 # Explicit (not workspace-inherited): this crate is also a path dependency of the
 # root vector workspace (sinks-caver_parquet), and cargo resolves inheritance
 # against root there. Keep version in lockstep with caver/Cargo.toml workspace.package.
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 license = "MPL-2.0"
 

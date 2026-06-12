@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.14.0] - 2026-06-12
+
+### Added
+- **Timer-flush freshness backstop** (caver-collector#901, parity with
+  the Python sink's caver-collector#888): the crate previously flushed
+  only when the buffer reached `batch_size` (plus the shutdown drain),
+  so a below-batch buffer from a low-rate source sat unshipped — and
+  unprotected against a crash — indefinitely. `ParquetSink` now runs a
+  named flusher thread (`caver-parquet-flush`) started by the Vector
+  sink's `run()`:
+  - **`flush_seconds`** (default 30): timer tick
+  - **`flush_max_age_seconds`** (default 300): a below-`batch_size`
+    buffer ships once its oldest event is at least this old; `0` drains
+    every tick. Worst-case latency / crash-loss window ≈ this value plus
+    up to one `flush_seconds` tick (age is only checked on ticks)
+  - the thread holds only a `Weak` and stops via condvar
+    (`stop_flusher()`, also joined on `Drop`); it never drains on stop —
+    shutdown paths call `flush()` explicitly, which always ships
+    regardless of the floor. `stop_flusher()` detaches instead of
+    joining when the final `Arc` drop happens on the flusher thread
+    itself (it holds a strong `Arc` mid-tick; a self-join would panic
+    inside `Drop` — caught in PR #22 review, regression-tested)
+  - `stats()` gains `timer_skips` (ticks that found a buffer too young)
+  - the Vector sink rejects `flush_seconds = 0` at config build time
+    (it is the tick that applies the backstop, not a disable switch);
+    the crate clamps `0` to `1`
+  - migration note: no separate `min_rows` knob — the timer-path floor
+    is `batch_size`; Python `min_rows: 0` maps to
+    `flush_max_age_seconds: 0`
+
 ## [0.13.0] - 2026-06-12
 
 ### Added
