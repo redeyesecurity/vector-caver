@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)] // test summary lines, per repo test convention
+
 //! Golden-fixture tests for vrl-caver-stdlib OCSF normalization.
 //!
 //! Two test suites:
