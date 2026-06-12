@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.12.0] - 2026-06-12
+
+### Fixed
+- **caver_staging hardening follow-ups from the #896/#897 reviews**
+  (caver-collector#899):
+  - staging `_time` is now schema-aware and full-precision: the wrapper
+    captures the native `Value::Timestamp` BEFORE flattening (honoring
+    `log_schema.timestamp_key` and the Vector-namespace timestamp meaning)
+    and renders microseconds — previously the RFC 3339 flatten truncated
+    to milliseconds and only the literal `timestamp` key was recognized;
+    string timestamps still fall back to the flat-row alias parse
+  - default hostname (`HOSTNAME` env / `/etc/hostname`) is key-charset
+    sanitized before use as the staging `source` path segment; corrupted
+    hostnames (non-ASCII, slashes) fall back to `collector` instead of
+    producing malformed object keys
+  - `ParquetSink::new` now enforces the key contract for direct crate
+    consumers (sanitize-with-fallback): key-unsafe `source`/`sensor_id`
+    fall through the resolution chain, key-unsafe or
+    non-ASCII-alpha-leading `writer_name` falls back to `collector`, and a
+    `staging_prefix` with empty or key-unsafe segments falls back to
+    `uf/ocsf` — the Vector config layer still rejects these loudly at boot
+- DLQ docs: `caver_staging` DLQ rows are post-preparation (string-typed
+  `_time`, injected defaults) while `native` rows are the raw maps —
+  replay tooling must handle both shapes
+
+### Added
+- CI now runs the wrapper sink unit tests (`sinks::caver_parquet` in the
+  root vector workspace) in the vector-component job — previously only
+  build + registration + config-validate were exercised there
+- typed-column coverage for the remaining contract columns: `type_uid`
+  (Int64) and `metric_value` (Float64) round-trip + missing-value defaults
+
 ## [0.11.0] - 2026-06-12
 
 ### Fixed

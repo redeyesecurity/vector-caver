@@ -143,6 +143,11 @@ pub struct CaverParquetConfig {
     /// object PUT — a later PUT failure does not NACK them. Failed batches go
     /// here; if unset they are dropped (logged at error level and counted in
     /// `component_discarded_events_total`).
+    ///
+    /// Row shape depends on `layout`: `caver_staging` DLQ rows are
+    /// post-preparation (string-typed `_time`, injected `index`/`class_uid`
+    /// defaults), `native` rows are the raw accepted maps. Replay tooling
+    /// must handle both shapes.
     #[configurable(metadata(docs::examples = "/var/lib/caver/dlq"))]
     pub dlq_path: Option<PathBuf>,
 

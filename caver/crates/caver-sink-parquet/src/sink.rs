@@ -58,20 +58,36 @@ impl Default for Config {
     }
 }
 
+/// Charset safe to embed raw in an object key (and the SigV4 canonical
+/// path). Anything outside it (`/`, spaces, non-ASCII) breaks the staging
+/// layout or 403s whole batches; all-dot segments confuse path-mapped
+/// tooling. Mirrors the Vector config layer's `is_key_safe` — enforced here
+/// too because the hostname default and direct crate consumers bypass that
+/// layer (caver-collector#899).
+fn key_safe(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && !s.bytes().all(|b| b == b'.')
+}
+
 fn hostname() -> String {
     // Try the environment variable first (set by most Unix shells / container runtimes).
     if let Ok(h) = std::env::var("HOSTNAME") {
-        if !h.is_empty() {
+        if key_safe(&h) {
             return h;
         }
     }
     // Fall back to reading /etc/hostname on Linux / macOS.
     if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
         let trimmed = h.trim();
-        if !trimmed.is_empty() {
+        if key_safe(trimmed) {
             return trimmed.to_owned();
         }
     }
+    // Empty, unset, or key-unsafe (we have met a corrupted-hostname box in
+    // the wild — garbage non-ASCII bytes): a safe constant beats a key that
+    // 403s every batch.
     "collector".into()
 }
 
@@ -128,13 +144,37 @@ pub struct ParquetSink {
 }
 
 impl ParquetSink {
-    pub fn new(cfg: Config, put_fn: Option<PutFn>) -> Self {
+    /// The Vector config layer validates `source`/`sensor_id`/`writer_name`/
+    /// `staging_prefix` at boot and rejects bad values loudly. The crate is
+    /// also consumable directly, so the contract is enforced here too —
+    /// sanitize-with-fallback rather than panic, because by the time `new`
+    /// runs we are the data plane (caver-collector#899). A non-contract key
+    /// would either 403 the whole batch (SigV4 canonical path) or be silently
+    /// skipped by the compactor.
+    pub fn new(mut cfg: Config, put_fn: Option<PutFn>) -> Self {
         let source_name = cfg
             .source
             .clone()
-            .filter(|s| !s.is_empty())
-            .or_else(|| Some(cfg.sensor_id.clone()).filter(|s| !s.is_empty()))
+            .filter(|s| key_safe(s))
+            .or_else(|| Some(cfg.sensor_id.clone()).filter(|s| key_safe(s)))
             .unwrap_or_else(|| "collector".into());
+        // PARQUET-CONTRACT filename regex: the compactor skips files whose
+        // writer prefix doesn't start with a letter.
+        if !cfg
+            .writer_name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+            || !key_safe(&cfg.writer_name)
+        {
+            cfg.writer_name = "collector".into();
+        }
+        let trimmed = cfg.staging_prefix.trim_matches('/');
+        cfg.staging_prefix = if !trimmed.is_empty() && trimmed.split('/').all(key_safe) {
+            trimmed.to_owned()
+        } else {
+            "uf/ocsf".into()
+        };
         Self {
             cfg,
             source_name,
@@ -246,6 +286,11 @@ impl ParquetSink {
         ])
     }
 
+    /// Row-shape note for replay tooling: in `CaverStaging` layout the DLQ
+    /// ndjson rows are POST-prep (`staging_row` applied: string-typed
+    /// `_time`, injected `index`/`class_uid` defaults), while `Native` rows
+    /// are the raw accepted maps. Matches the Python sink; anything replaying
+    /// a DLQ must handle both shapes (caver-collector#899 item 5).
     fn to_dlq(&self, rows: &[HashMap<String, String>], reason: &str) {
         let Some(dlq) = &self.cfg.dlq_path else {
             return;
@@ -273,6 +318,7 @@ mod tests {
 
     #[test]
     fn flush_on_batch_size() {
+        #[allow(clippy::type_complexity)] // test capture buffer
         let captured: Arc<StdMutex<Vec<(String, String, Vec<u8>)>>> =
             Arc::new(StdMutex::new(Vec::new()));
         let cap2 = captured.clone();
@@ -363,6 +409,7 @@ mod tests {
 
     #[test]
     fn staging_flush_partitions_by_event_time() {
+        #[allow(clippy::type_complexity)] // test capture buffer
         let captured: Arc<StdMutex<Vec<(String, Vec<u8>)>>> = Arc::new(StdMutex::new(Vec::new()));
         let cap2 = captured.clone();
         let put: PutFn = Arc::new(move |_b, key: &str, body: Vec<u8>| {
@@ -441,6 +488,51 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(ParquetSink::new(cfg, None).source_name, "collector");
+
+        // Key-unsafe candidates fall through the chain like empty ones — a
+        // corrupted hostname (garbage non-ASCII bytes, seen in the wild) or a
+        // slash must never reach the staging key path.
+        let cfg = Config {
+            source: Some("bad/segment".into()),
+            sensor_id: "Matt\u{2019}s-box".into(),
+            ..Config::default()
+        };
+        assert_eq!(ParquetSink::new(cfg, None).source_name, "collector");
+    }
+
+    #[test]
+    fn contract_enforced_in_new_for_direct_consumers() {
+        // writer_name must start with a letter and be key-safe (the
+        // compactor's PARQUET-CONTRACT filename regex); staging_prefix is
+        // trimmed and each segment validated. The Vector config layer rejects
+        // these loudly at boot; the crate sanitizes with the defaults.
+        let cfg = Config {
+            writer_name: "9starts-with-digit".into(),
+            staging_prefix: "/uf/ocsf/".into(),
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, None);
+        assert_eq!(sink.cfg.writer_name, "collector");
+        assert_eq!(sink.cfg.staging_prefix, "uf/ocsf", "slashes trimmed");
+
+        let cfg = Config {
+            writer_name: "agent".into(),
+            staging_prefix: "uf//ocsf".into(), // empty middle segment
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, None);
+        assert_eq!(sink.cfg.writer_name, "agent", "valid name kept");
+        assert_eq!(sink.cfg.staging_prefix, "uf/ocsf", "bad prefix -> default");
+    }
+
+    #[test]
+    fn key_safe_charset() {
+        assert!(key_safe("edge-01.local_x"));
+        assert!(!key_safe(""));
+        assert!(!key_safe("a b"));
+        assert!(!key_safe("a/b"));
+        assert!(!key_safe(".."));
+        assert!(!key_safe("naïve"));
     }
 
     #[test]

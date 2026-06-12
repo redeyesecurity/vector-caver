@@ -10,8 +10,10 @@ use vector_lib::{
     },
 };
 
+use vrl::event_path;
+
 use crate::{
-    event::{Event, EventArray, EventContainer, EventStatus, Finalizable, Value},
+    event::{Event, EventArray, EventContainer, EventStatus, Finalizable, LogEvent, Value},
     sinks::util::StreamSink,
 };
 
@@ -63,6 +65,29 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
+/// Extract the event time for the staging `_time` column BEFORE the log is
+/// flattened, so it is schema-aware and full-precision: `get_timestamp()`
+/// honors the configured `log_schema.timestamp_key` (and the Vector-namespace
+/// "timestamp" semantic meaning), and reading the raw `Value::Timestamp`
+/// keeps microsecond precision where the flattened RFC 3339 form is
+/// millisecond-truncated (caver-collector#899). The timestamp is REMOVED from
+/// the log (the alias moves, not copies), matching [`alias_staging_fields`].
+/// Returns `None` — leaving the string-fallback alias and the crate's
+/// now-default to handle the row — when `_time` is already set explicitly or
+/// the timestamp isn't a native `Value::Timestamp`.
+fn take_staging_time(log: &mut LogEvent) -> Option<String> {
+    if log.get(event_path!("_time")).is_some()
+        || !matches!(log.get_timestamp(), Some(Value::Timestamp(_)))
+    {
+        return None;
+    }
+    match log.remove_timestamp() {
+        Some(Value::Timestamp(ts)) => Some(format!("{:.6}", ts.timestamp_micros() as f64 / 1e6)),
+        // Unreachable: guarded by the peek above.
+        _ => None,
+    }
+}
+
 /// Alias Vector log conventions onto the caver_staging contract columns,
 /// without clobbering values the pipeline set explicitly:
 /// `timestamp` (RFC 3339, the flattened form of `Value::Timestamp`) → `_time`
@@ -71,6 +96,10 @@ fn value_to_string(value: &Value) -> String {
 /// payload twice and diverge schema-wise from collector-written staging
 /// files. Keys that fail to alias stay put; anything still missing afterwards
 /// is defaulted by the crate's row prep (`_time` → now, `_raw` → `""`).
+///
+/// The native-timestamp fast path runs earlier ([`take_staging_time`], on the
+/// unflattened log); the `timestamp`-key parse here is the fallback for
+/// string timestamps (e.g. decoded JSON that was never coerced).
 fn alias_staging_fields(row: &mut HashMap<String, String>) {
     if !row.contains_key("_time")
         && let Some(ts) = row
@@ -135,25 +164,37 @@ impl StreamSink<EventArray> for CaverParquetSink {
             let rows: Vec<HashMap<String, String>> = events
                 .into_events()
                 .filter_map(|event| match event {
-                    Event::Log(log) => Some(match log.all_event_fields() {
-                        Some(fields) => fields
-                            .map(|(k, v)| (k.to_string(), value_to_string(v)))
-                            .collect(),
-                        // A log whose root isn't an object (e.g. a scalar from
-                        // a raw codec) still ships, keyed as `message`.
-                        None => {
-                            HashMap::from([("message".to_string(), value_to_string(log.value()))])
+                    Event::Log(mut log) => {
+                        // Schema-aware, full-precision event time — must run
+                        // on the unflattened log (see `take_staging_time`).
+                        let staging_time = if self.staging {
+                            take_staging_time(&mut log)
+                        } else {
+                            None
+                        };
+                        let mut row: HashMap<String, String> = match log.all_event_fields() {
+                            Some(fields) => fields
+                                .map(|(k, v)| (k.to_string(), value_to_string(v)))
+                                .collect(),
+                            // A log whose root isn't an object (e.g. a scalar
+                            // from a raw codec) still ships, keyed as
+                            // `message`.
+                            None => HashMap::from([(
+                                "message".to_string(),
+                                value_to_string(log.value()),
+                            )]),
+                        };
+                        if let Some(t) = staging_time {
+                            row.insert("_time".to_string(), t);
                         }
-                    }),
+                        if self.staging {
+                            alias_staging_fields(&mut row);
+                        }
+                        Some(row)
+                    }
                     // Unreachable in practice: `Input::log()` means the
                     // topology never hands this sink a metric/trace array.
                     _ => None,
-                })
-                .map(|mut row: HashMap<String, String>| {
-                    if self.staging {
-                        alias_staging_fields(&mut row);
-                    }
-                    row
                 })
                 .collect();
 
@@ -321,6 +362,48 @@ mod tests {
             "caver_staging contract key violated: {key}"
         );
         assert!(*size > 0, "empty parquet object");
+    }
+
+    #[test]
+    fn take_staging_time_preserves_sub_ms_and_yields_to_explicit_time() {
+        // Native Value::Timestamp with µs precision: the ms-truncating
+        // RFC 3339 flatten is bypassed (caver-collector#899 item 1).
+        let mut log = LogEvent::default();
+        log.insert(
+            "timestamp",
+            Value::Timestamp(chrono::DateTime::from_timestamp(1781276645, 250_500_000).unwrap()),
+        );
+        assert_eq!(
+            take_staging_time(&mut log).as_deref(),
+            Some("1781276645.250500")
+        );
+        assert!(
+            log.get(event_path!("timestamp")).is_none(),
+            "timestamp is MOVED so the object doesn't store it twice"
+        );
+
+        // Explicit `_time` wins: no-op, timestamp left for the flattened row.
+        let mut log = LogEvent::default();
+        log.insert("_time", "1700000000.0");
+        log.insert(
+            "timestamp",
+            Value::Timestamp(chrono::DateTime::from_timestamp(1781276645, 0).unwrap()),
+        );
+        assert_eq!(take_staging_time(&mut log), None);
+        assert!(
+            log.get(event_path!("timestamp")).is_some(),
+            "not consumed when _time is explicit"
+        );
+
+        // String timestamps are not native: fall through (unconsumed) to the
+        // alias_staging_fields parse on the flattened row.
+        let mut log = LogEvent::default();
+        log.insert("timestamp", "2026-06-12T15:04:05.250Z");
+        assert_eq!(take_staging_time(&mut log), None);
+        assert!(
+            log.get(event_path!("timestamp")).is_some(),
+            "string timestamp not consumed"
+        );
     }
 
     #[test]
