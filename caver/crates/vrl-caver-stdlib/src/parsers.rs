@@ -28,6 +28,7 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
 
     let event_type = ev.get("event_type").and_then(Value::as_str).unwrap_or("");
     let mut out = json!({
+        "_vendor":    "suricata",
         "event_type": event_type,
         "timestamp":  ev.get("timestamp").and_then(Value::as_str).unwrap_or(""),
         "src_ip":     ev.get("src_ip").and_then(Value::as_str).unwrap_or(""),
@@ -43,6 +44,12 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
     }
     if let Some(id) = ev.get("flow_id").and_then(Value::as_u64) {
         out["flow_id"] = json!(id);
+    }
+    if let Some(ap) = ev.get("app_proto").and_then(Value::as_str) {
+        out["app_proto"] = json!(ap);
+    }
+    if let Some(iface) = ev.get("in_iface").and_then(Value::as_str) {
+        out["in_iface"] = json!(iface);
     }
 
     match event_type {
@@ -78,6 +85,16 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
                     "rrname": d.get("rrname").and_then(Value::as_str).unwrap_or(""),
                     "rrtype": d.get("rrtype").and_then(Value::as_str).unwrap_or(""),
                     "rcode":  d.get("rcode").and_then(Value::as_str).unwrap_or(""),
+                });
+            }
+        }
+        "tls" => {
+            if let Some(t) = ev.get("tls") {
+                out["tls"] = json!({
+                    "sni":     t.get("sni").and_then(Value::as_str).unwrap_or(""),
+                    "version": t.get("version").and_then(Value::as_str).unwrap_or(""),
+                    "subject": t.get("subject").and_then(Value::as_str).unwrap_or(""),
+                    "issuerdn": t.get("issuerdn").and_then(Value::as_str).unwrap_or(""),
                 });
             }
         }
@@ -133,6 +150,7 @@ fn normalise_zeek_json(v: Value, log_type: &str) -> Value {
     let proto = v.get("proto").and_then(Value::as_str).unwrap_or("");
 
     let mut out = json!({
+        "_vendor":  "zeek",
         "log_type": log_type,
         "ts":       ts,
         "uid":      uid,
@@ -191,6 +209,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
     match log_type {
         "conn" if fields.len() >= 21 => {
             json!({
+                "_vendor":     "zeek",
                 "log_type":    "conn",
                 "ts":          fields[0].parse::<f64>().ok(),
                 "uid":         fields[1],
@@ -208,6 +227,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
         }
         "dns" if fields.len() >= 22 => {
             json!({
+                "_vendor":   "zeek",
                 "log_type":  "dns",
                 "ts":        fields[0].parse::<f64>().ok(),
                 "uid":       fields[1],
@@ -223,6 +243,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
         }
         "http" if fields.len() >= 26 => {
             json!({
+                "_vendor":     "zeek",
                 "log_type":    "http",
                 "ts":          fields[0].parse::<f64>().ok(),
                 "uid":         fields[1],
@@ -250,7 +271,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
 /// Parse Windows Event Log XML into a structured JSON object.
 /// Extracts System fields and EventData key/value pairs.
 pub fn parse_winevent(raw: &str) -> Value {
-    let mut out = json!({});
+    let mut out = json!({"_vendor": "winevent"});
 
     // System section
     out["event_id"] = extract_xml_text(raw, "EventID").map_or(Value::Null, |s| {
@@ -352,6 +373,7 @@ fn parse_sysmon_object(ev: &Value) -> Value {
     let event_id: u64 = ev.get("event_id").and_then(Value::as_u64).unwrap_or(0);
 
     let mut out = json!({
+        "_vendor":  "sysmon",
         "event_id": event_id,
         "computer": ev.get("computer").and_then(Value::as_str).unwrap_or(""),
         "time_created": ev.get("time_created").and_then(Value::as_str).unwrap_or(""),
@@ -698,6 +720,7 @@ mod tests {
             }
         }"#;
         let v = parse_suricata_eve(raw);
+        assert_eq!(v["_vendor"], "suricata");
         assert_eq!(v["event_type"], "alert");
         assert_eq!(v["src_ip"], "10.0.0.1");
         assert_eq!(v["alert"]["signature_id"], 2100498u64);
@@ -708,12 +731,15 @@ mod tests {
     fn suricata_invalid_json() {
         let v = parse_suricata_eve("not json");
         assert!(v["error"].is_string());
+        // error objects carry no vendor tag
+        assert!(v.get("_vendor").is_none());
     }
 
     #[test]
     fn zeek_conn_json() {
         let line = r#"{"ts":1748426400.0,"uid":"C1234","id.orig_h":"10.0.0.1","id.orig_p":54321,"id.resp_h":"1.2.3.4","id.resp_p":443,"proto":"tcp","service":"ssl","duration":0.5,"orig_bytes":1024,"resp_bytes":2048,"conn_state":"SF","missed_bytes":0}"#;
         let v = parse_zeek(line, "conn");
+        assert_eq!(v["_vendor"], "zeek");
         assert_eq!(v["log_type"], "conn");
         assert_eq!(v["src_ip"], "10.0.0.1");
         assert_eq!(v["dest_port"], 443u64);
@@ -737,6 +763,7 @@ mod tests {
           </EventData>
         </Event>"#;
         let v = parse_winevent(xml);
+        assert_eq!(v["_vendor"], "winevent");
         assert_eq!(v["event_id"], 4625u64);
         assert_eq!(v["computer"], "DESKTOP-ABC");
         assert_eq!(v["provider"], "Microsoft-Windows-Security-Auditing");
@@ -761,6 +788,7 @@ mod tests {
             }
         });
         let v = parse_sysmon(&ev);
+        assert_eq!(v["_vendor"], "sysmon");
         assert_eq!(v["event_id"], 1u64);
         assert_eq!(v["process"]["pid"], 4892u64);
         assert_eq!(v["process"]["image"], "C:\\Windows\\System32\\cmd.exe");
