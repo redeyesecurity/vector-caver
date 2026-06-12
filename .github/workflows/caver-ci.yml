@@ -48,3 +48,60 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         working-directory: caver
         run: cargo test --workspace
+
+  # Proves the caver crates stay loadable as real Vector components
+  # (caver-collector#894): builds the root vector binary with only the
+  # caver_parquet sink enabled and asserts component registration.
+  vector-component:
+    name: vector component registration
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if sink not wired
+        id: check
+        run: |
+          if ! grep -q 'sinks-caver_parquet' Cargo.toml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.skip != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.skip != 'true'
+        with:
+          key: vector-component
+      - name: Install protoc
+        if: steps.check.outputs.skip != 'true'
+        run: command -v protoc >/dev/null 2>&1 || brew install protobuf
+      - name: Build minimal vector with caver_parquet
+        if: steps.check.outputs.skip != 'true'
+        # --locked: a stale committed Cargo.lock must fail here, not get
+        # silently rewritten on the runner.
+        run: cargo build --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
+      - name: caver_parquet registered in `vector list`
+        if: steps.check.outputs.skip != 'true'
+        run: ./target/debug/vector list | grep -w caver_parquet
+      - name: Config naming caver_parquet validates
+        if: steps.check.outputs.skip != 'true'
+        # Full validate (no --no-environment) so SinkConfig::build actually
+        # runs: env-var + sensor_id + endpoint checks are exercised. build()
+        # does no I/O and the healthcheck is a no-op, so no store is needed.
+        # RUNNER_TEMP keeps the 9 runners sharing this box out of each
+        # other's way.
+        run: |
+          mkdir -p "$RUNNER_TEMP/caver-ci-data"
+          cat > "$RUNNER_TEMP/caver-component-ci.toml" <<EOF
+          data_dir = "$RUNNER_TEMP/caver-ci-data"
+
+          [sources.demo]
+          type = "demo_logs"
+          format = "syslog"
+
+          [sinks.lake]
+          type = "caver_parquet"
+          inputs = ["demo"]
+          bucket = "ci-validate"
+          endpoint = "http://127.0.0.1:1"
+          access_key_env = "CAVER_CI_AK"
+          secret_key_env = "CAVER_CI_SK"
+          EOF
+          CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate "$RUNNER_TEMP/caver-component-ci.toml"

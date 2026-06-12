@@ -134,6 +134,9 @@ members = [
   "lib/vector-vrl/web-playground",
   "vdev",
 ]
+# The caver/ directory is its own Cargo workspace (built by caver-ci); excluding
+# it here lets root depend on its crates by path without a workspace-root clash.
+exclude = ["caver"]
 
 [workspace.dependencies]
 anyhow = { version = "1.0.102", default-features = false, features = ["std"] }
@@ -252,6 +255,7 @@ vector-config-macros.workspace = true
 vector-vrl-functions = { workspace = true, features = ["vrl-metrics"] }
 vector-vrl-metrics = { path = "lib/vector-vrl/metrics" }
 loki-logproto = { path = "lib/loki-logproto", optional = true }
+caver-sink-parquet = { path = "caver/crates/caver-sink-parquet", optional = true }
 
 # Tokio / Futures
 async-stream.workspace = true
@@ -857,6 +861,7 @@ sinks-logs = [
   "sinks-azure_logs_ingestion",
   "sinks-azure_monitor_logs",
   "sinks-blackhole",
+  "sinks-caver_parquet",
   "sinks-chronicle",
   "sinks-clickhouse",
   "sinks-console",
@@ -926,6 +931,7 @@ sinks-azure_blob = ["dep:azure_core", "dep:azure_identity", "dep:azure_storage_b
 sinks-azure_logs_ingestion = ["dep:azure_core", "dep:azure_identity", "dep:azure_storage_blob"]
 sinks-azure_monitor_logs = []
 sinks-blackhole = []
+sinks-caver_parquet = ["dep:caver-sink-parquet"]
 sinks-chronicle = []
 sinks-clickhouse = ["dep:nom", "dep:rust_decimal", "codecs-arrow"]
 sinks-console = []
