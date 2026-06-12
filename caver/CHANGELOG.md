@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0] - 2026-06-12
+
+### Added
+- `caver-sink-parquet`: built-in S3/MinIO transport (caver-collector#895)
+  - `transport::S3Config` — endpoint (MinIO/path-style or AWS-default), region,
+    credentials via env-var **names** (`access_key_env`/`secret_key_env`/optional
+    `session_token_env`, search-peer `token_env` convention), retry knobs, timeout
+  - `transport::S3Transport::put` — signed path-style PutObject; exponential-backoff
+    retry on 5xx/transport errors, immediate fail on 4xx; re-signs each attempt
+  - `transport::s3_put_fn` — builds a ready `PutFn` for `ParquetSink::new`
+  - `sigv4` — minimal AWS Signature V4 (header auth, service=s3), pinned against
+    both official AWS doc examples (GET + PUT `test$file.text`)
+  - 13 new tests (sigv4 vectors, mockito wire tests incl. retry/no-retry-4xx, DLQ path)
+
+### Changed
+- `caver-sink-parquet`: **`PutFn` is now fallible** — `Fn(&str, &str, Vec<u8>) -> Result<(), String>`.
+  A failed put no longer counts as a flush: the batch goes to `dlq_path` as ndjson,
+  events are counted in `dropped`, and a new `put_errors` stat is exposed.
+
 ## [0.6.0] - 2026-05-28
 
 ### Added

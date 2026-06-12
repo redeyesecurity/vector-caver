@@ -361,7 +361,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "caver-ops"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "caver-ottl-funcs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hex",
  "hmac",
@@ -379,19 +379,24 @@ dependencies = [
 
 [[package]]
 name = "caver-sink-parquet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "arrow",
  "chrono",
+ "hex",
+ "hmac",
+ "mockito",
  "parquet",
  "serde_json",
+ "sha2",
  "thiserror",
+ "ureq",
  "uuid",
 ]
 
 [[package]]
 name = "caver-sink-search-peer"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "mockito",
  "serde_json",
@@ -401,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "caver-source-uf-compat"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "cc"
@@ -1883,7 +1888,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vrl-caver-stdlib"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde_json",
 ]

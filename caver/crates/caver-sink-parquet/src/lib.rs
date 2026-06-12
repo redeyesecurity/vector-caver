@@ -3,7 +3,10 @@
 
 pub mod partition;
 pub mod schema;
+pub mod sigv4;
 pub mod sink;
+pub mod transport;
 pub mod writer;
 
 pub use sink::{Config, ParquetSink, PutFn};
+pub use transport::{s3_put_fn, S3Config, S3Transport, TransportError};
