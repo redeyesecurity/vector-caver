@@ -1,0 +1,20 @@
+{
+  "_vendor": "palo_alto",
+  "type": "THREAT",
+  "subtype": "vulnerability",
+  "serial": "001801012345",
+  "device_name": "PA-VM-EDGE-01",
+  "vsys": "vsys1",
+  "rule": "allow-web",
+  "app": "web-browsing",
+  "proto": "tcp",
+  "action": "reset-both",
+  "severity": "critical",
+  "threatid": "Microsoft Windows SMBv1 Remote Code Execution Vulnerability(32422)",
+  "category": "code-execution",
+  "src": "203.0.113.50",
+  "dst": "10.0.0.40",
+  "sport": "44818",
+  "dport": "445",
+  "misc": "\\\\share\\payload.bin"
+}

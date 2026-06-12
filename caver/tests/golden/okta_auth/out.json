@@ -1,11 +1,11 @@
 {
-  "class_uid": 4002,
+  "class_uid": 3002,
   "class_name": "Authentication",
   "category_uid": 3,
   "category_name": "Identity & Access Management",
   "activity_id": 1,
   "activity_name": "Logon",
-  "type_uid": 400201,
+  "type_uid": 300201,
   "time": 1779962400000,
   "severity_id": 1,
   "severity": "Informational",

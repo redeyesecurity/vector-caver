@@ -1,0 +1,14 @@
+{
+  "_vendor": "zeek",
+  "_path": "dns",
+  "ts": 1779962401.5,
+  "uid": "C4J4Th3PJpwUYZZ6gc",
+  "id.orig_h": "10.0.0.22",
+  "id.orig_p": 53533,
+  "id.resp_h": "10.0.0.1",
+  "id.resp_p": 53,
+  "proto": "udp",
+  "query": "beacon.evil.example.com",
+  "qtype_name": "A",
+  "rcode_name": "NXDOMAIN"
+}

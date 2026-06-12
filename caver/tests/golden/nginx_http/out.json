@@ -1,11 +1,11 @@
 {
-  "class_uid": 3003,
+  "class_uid": 4002,
   "class_name": "HTTP Activity",
   "category_uid": 4,
   "category_name": "Network Activity",
   "activity_id": 1,
   "activity_name": "Connect",
-  "type_uid": 300301,
+  "type_uid": 400201,
   "time": 1779962400000,
   "severity_id": 1,
   "severity": "Informational",
