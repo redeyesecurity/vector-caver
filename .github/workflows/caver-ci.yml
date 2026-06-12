@@ -105,3 +105,10 @@ jobs:
           secret_key_env = "CAVER_CI_SK"
           EOF
           CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate "$RUNNER_TEMP/caver-component-ci.toml"
+      - name: Wrapper sink unit tests
+        if: steps.check.outputs.skip != 'true'
+        # The caver-crates job covers only the caver workspace; the wrapper
+        # (src/sinks/caver_parquet) lives in the root vector workspace and was
+        # otherwise never tested in CI (caver-collector#899 item 4). Reuses
+        # the dependency cache from the build step above.
+        run: cargo test --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap" --lib sinks::caver_parquet
