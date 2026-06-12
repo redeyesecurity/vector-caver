@@ -223,13 +223,13 @@ impl SinkConfig for CaverParquetConfig {
         if self.batch_size == 0 {
             return Err("`batch_size` must be at least 1".into());
         }
-        if let Some(sensor_id) = &self.sensor_id {
-            if !is_key_safe(sensor_id) {
-                return Err(format!(
-                    "`sensor_id` must match [A-Za-z0-9._-]+ (it is embedded in the object key), got {sensor_id:?}"
-                )
-                .into());
-            }
+        if let Some(sensor_id) = &self.sensor_id
+            && !is_key_safe(sensor_id)
+        {
+            return Err(format!(
+                "`sensor_id` must match [A-Za-z0-9._-]+ (it is embedded in the object key), got {sensor_id:?}"
+            )
+            .into());
         }
         if let Some(source) = &self.source {
             // Embedded raw in the staging object key, same hazard as sensor_id.

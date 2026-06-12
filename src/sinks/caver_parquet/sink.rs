@@ -69,21 +69,20 @@ fn value_to_string(value: &Value) -> String {
 /// (epoch seconds), `message` → `_raw`. Anything still missing afterwards is
 /// defaulted by the crate's row prep (`_time` → now, `_raw` → `""`).
 fn alias_staging_fields(row: &mut HashMap<String, String>) {
-    if !row.contains_key("_time") {
-        if let Some(ts) = row
+    if !row.contains_key("_time")
+        && let Some(ts) = row
             .get("timestamp")
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        {
-            row.insert(
-                "_time".to_string(),
-                format!("{:.6}", ts.timestamp_micros() as f64 / 1e6),
-            );
-        }
+    {
+        row.insert(
+            "_time".to_string(),
+            format!("{:.6}", ts.timestamp_micros() as f64 / 1e6),
+        );
     }
-    if !row.contains_key("_raw") {
-        if let Some(msg) = row.get("message") {
-            row.insert("_raw".to_string(), msg.clone());
-        }
+    if !row.contains_key("_raw")
+        && let Some(msg) = row.get("message")
+    {
+        row.insert("_raw".to_string(), msg.clone());
     }
 }
 
