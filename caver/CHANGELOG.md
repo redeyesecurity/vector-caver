@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.0] - 2026-06-12
+
+### Added
+- **`caver_parquet` writes the caver_staging PARQUET-CONTRACT by default**
+  (caver-collector#896, contract: RES-splunk-caver#1800): collector output is
+  now served by the Caver lake out of the box, matching the Python sink's
+  default (caver-collector#843)
+  - New `layout` config: `caver_staging` (default) | `native` (the original
+    `<class_uid>/dt=` all-string layout, for non-Caver consumers only)
+  - Staging keys: `<staging_prefix>/<source>/year=YYYY/month=MM/day=DD/`
+    `<writer_name>_YYYYMMDD_HHMMSS_<id8>.parquet`, partitioned by the first
+    row's event time; new `source` (default: `sensor_id` → `collector`),
+    `writer_name` (default `collector`), `staging_prefix` (default `uf/ocsf`)
+    config fields, all charset-validated in `build()`
+  - Typed columns per the contract: `_time`/`metric_value` Float64,
+    `class_uid`/`category_uid`/`severity_id`/`activity_id`/`status_id`/
+    `type_uid` Int64 (`int(float(v))` truncation, unparseable → 0), everything
+    else Utf8 with missing values as `""` (not null); alphabetically sorted
+    column union; zstd compression
+  - Row prep parity with the Python sink: `_time` defaults to now,
+    `index` → `main`, `class_uid` empty-or-missing → `0`, required string
+    columns (`class_name`, `host`, `source`, `sourcetype`, `_raw`) → `""`
+  - Vector log conventions aliased onto the contract at the wrapper layer
+    (staging only, never clobbering explicit values): `timestamp` (RFC 3339)
+    → `_time` (epoch seconds), `message` → `_raw`
+
 ## [0.8.0] - 2026-06-12
 
 ### Added

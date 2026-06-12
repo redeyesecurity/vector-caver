@@ -33,12 +33,45 @@ const fn default_max_retries() -> u32 {
     3
 }
 
+fn default_writer_name() -> String {
+    "collector".into()
+}
+
+fn default_staging_prefix() -> String {
+    "uf/ocsf".into()
+}
+
+/// Object layout written to the lake.
+#[configurable_component]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutConfig {
+    /// The caver_staging PARQUET-CONTRACT (typed columns, zstd,
+    /// `<staging_prefix>/<source>/year=/month=/day=/` keys) — the shape the
+    /// Caver compactor and lake reader serve. Output is queryable out of the
+    /// box, matching the Python collector's default.
+    #[default]
+    CaverStaging,
+    /// The sink-original `<class_uid>/dt=` layout with all-string columns.
+    /// NOT served by the Caver lake — opt in only for a non-Caver consumer.
+    Native,
+}
+
 const fn default_retry_base_ms() -> u64 {
     200
 }
 
 const fn default_timeout_ms() -> u64 {
     30_000
+}
+
+/// Charset safe to embed raw in an object key (and the SigV4 canonical path):
+/// anything outside it (`/`, `..`, spaces) breaks the lake layout or 403s
+/// whole batches.
+fn is_key_safe(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// Configuration for the `caver_parquet` sink.
@@ -63,8 +96,39 @@ pub struct CaverParquetConfig {
     pub sensor_id: Option<String>,
 
     /// Event field carrying the OCSF `class_uid` used for partitioning.
+    ///
+    /// Only used by `layout = "native"`.
     #[serde(default = "default_class_uid_field")]
     pub class_uid_field: String,
+
+    /// Object layout written to the lake.
+    #[serde(default)]
+    pub layout: LayoutConfig,
+
+    /// caver_staging: source-name path segment
+    /// (`<staging_prefix>/<source>/year=...`).
+    ///
+    /// Must match `[A-Za-z0-9._-]+`. Defaults to `sensor_id` (falling back to
+    /// the literal `collector`), like the Python collector sink.
+    #[configurable(metadata(docs::examples = "edge-01"))]
+    pub source: Option<String>,
+
+    /// caver_staging: filename writer prefix
+    /// (`<writer_name>_YYYYMMDD_HHMMSS_<id>.parquet`).
+    ///
+    /// Must start with a letter and match `[A-Za-z][A-Za-z0-9._-]*` (the
+    /// PARQUET-CONTRACT filename shape).
+    #[serde(default = "default_writer_name")]
+    pub writer_name: String,
+
+    /// caver_staging: key prefix ahead of the source segment.
+    ///
+    /// Slash-separated segments, each matching `[A-Za-z0-9._-]+`; leading and
+    /// trailing slashes are stripped. Change only if the lake's staging
+    /// prefix differs from the default.
+    #[serde(default = "default_staging_prefix")]
+    #[configurable(metadata(docs::examples = "uf/ocsf"))]
+    pub staging_prefix: String,
 
     /// Number of events buffered before a Parquet object is written.
     #[serde(default = "default_batch_size")]
@@ -133,6 +197,10 @@ impl Default for CaverParquetConfig {
             bucket: "caver-lake".into(),
             sensor_id: None,
             class_uid_field: default_class_uid_field(),
+            layout: LayoutConfig::default(),
+            source: None,
+            writer_name: default_writer_name(),
+            staging_prefix: default_staging_prefix(),
             batch_size: default_batch_size(),
             dlq_path: None,
             endpoint: None,
@@ -156,19 +224,44 @@ impl SinkConfig for CaverParquetConfig {
             return Err("`batch_size` must be at least 1".into());
         }
         if let Some(sensor_id) = &self.sensor_id {
-            // The sensor id is embedded raw in the object key; anything
-            // outside this set (`/`, `..`, spaces) breaks the lake layout or
-            // the SigV4 canonical path and 403s whole batches.
-            if sensor_id.is_empty()
-                || !sensor_id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-            {
+            if !is_key_safe(sensor_id) {
                 return Err(format!(
                     "`sensor_id` must match [A-Za-z0-9._-]+ (it is embedded in the object key), got {sensor_id:?}"
                 )
                 .into());
             }
+        }
+        if let Some(source) = &self.source {
+            // Embedded raw in the staging object key, same hazard as sensor_id.
+            if source.is_empty() || !is_key_safe(source) {
+                return Err(format!(
+                    "`source` must match [A-Za-z0-9._-]+ (it is embedded in the object key), got {source:?}"
+                )
+                .into());
+            }
+        }
+        // PARQUET-CONTRACT filename regex requires the writer prefix to start
+        // with a letter; the compactor skips files that don't match.
+        if !self
+            .writer_name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+            || !is_key_safe(&self.writer_name)
+        {
+            return Err(format!(
+                "`writer_name` must match [A-Za-z][A-Za-z0-9._-]* (the PARQUET-CONTRACT filename shape), got {:?}",
+                self.writer_name
+            )
+            .into());
+        }
+        let staging_prefix = self.staging_prefix.trim_matches('/');
+        if staging_prefix.is_empty() || !staging_prefix.split('/').all(is_key_safe) {
+            return Err(format!(
+                "`staging_prefix` must be slash-separated [A-Za-z0-9._-]+ segments, got {:?}",
+                self.staging_prefix
+            )
+            .into());
         }
         if self.acknowledgements.enabled() && self.dlq_path.is_none() {
             warn!(
@@ -192,11 +285,19 @@ impl SinkConfig for CaverParquetConfig {
         // misconfigured sink refuses to boot instead of dropping data later.
         let put_fn = caver_sink_parquet::s3_put_fn(s3_cfg).map_err(|e| e.to_string())?;
 
+        let layout = match self.layout {
+            LayoutConfig::CaverStaging => caver_sink_parquet::Layout::CaverStaging,
+            LayoutConfig::Native => caver_sink_parquet::Layout::Native,
+        };
         let mut sink_cfg = caver_sink_parquet::Config {
             bucket: self.bucket.clone(),
             class_uid_field: self.class_uid_field.clone(),
             batch_size: self.batch_size,
             dlq_path: self.dlq_path.clone(),
+            layout,
+            source: self.source.clone(),
+            writer_name: self.writer_name.clone(),
+            staging_prefix: staging_prefix.to_owned(),
             ..Default::default()
         };
         if let Some(sensor_id) = &self.sensor_id {
@@ -204,7 +305,11 @@ impl SinkConfig for CaverParquetConfig {
         }
         let parquet = Arc::new(caver_sink_parquet::ParquetSink::new(sink_cfg, Some(put_fn)));
 
-        let sink = CaverParquetSink::new(parquet, self.dlq_path.is_some());
+        let sink = CaverParquetSink::new(
+            parquet,
+            self.dlq_path.is_some(),
+            self.layout == LayoutConfig::CaverStaging,
+        );
         let healthcheck = future::ok(()).boxed();
 
         Ok((VectorSink::Stream(Box::new(sink)), healthcheck))

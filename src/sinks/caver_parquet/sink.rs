@@ -34,13 +34,22 @@ pub struct CaverParquetSink {
     /// Whether the inner sink writes failed batches to a DLQ (drives the
     /// failure log's "recoverable or gone" wording).
     dlq_enabled: bool,
+    /// Whether the inner sink writes the caver_staging layout: Vector log
+    /// conventions (`timestamp`, `message`) are aliased onto the contract's
+    /// `_time`/`_raw` columns so event time and raw payload survive.
+    staging: bool,
 }
 
 impl CaverParquetSink {
-    pub const fn new(parquet: Arc<caver_sink_parquet::ParquetSink>, dlq_enabled: bool) -> Self {
+    pub const fn new(
+        parquet: Arc<caver_sink_parquet::ParquetSink>,
+        dlq_enabled: bool,
+        staging: bool,
+    ) -> Self {
         Self {
             parquet,
             dlq_enabled,
+            staging,
         }
     }
 }
@@ -51,6 +60,30 @@ fn value_to_string(value: &Value) -> String {
         Value::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         Value::Timestamp(ts) => ts.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         other => other.to_string(),
+    }
+}
+
+/// Alias Vector log conventions onto the caver_staging contract columns,
+/// without clobbering values the pipeline set explicitly:
+/// `timestamp` (RFC 3339, the flattened form of `Value::Timestamp`) → `_time`
+/// (epoch seconds), `message` → `_raw`. Anything still missing afterwards is
+/// defaulted by the crate's row prep (`_time` → now, `_raw` → `""`).
+fn alias_staging_fields(row: &mut HashMap<String, String>) {
+    if !row.contains_key("_time") {
+        if let Some(ts) = row
+            .get("timestamp")
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        {
+            row.insert(
+                "_time".to_string(),
+                format!("{:.6}", ts.timestamp_micros() as f64 / 1e6),
+            );
+        }
+    }
+    if !row.contains_key("_raw") {
+        if let Some(msg) = row.get("message") {
+            row.insert("_raw".to_string(), msg.clone());
+        }
     }
 }
 
@@ -112,6 +145,12 @@ impl StreamSink<EventArray> for CaverParquetSink {
                     // Unreachable in practice: `Input::log()` means the
                     // topology never hands this sink a metric/trace array.
                     _ => None,
+                })
+                .map(|mut row: HashMap<String, String>| {
+                    if self.staging {
+                        alias_staging_fields(&mut row);
+                    }
+                    row
                 })
                 .collect();
 
@@ -196,10 +235,11 @@ mod tests {
             bucket: "test-bucket".into(),
             sensor_id: "test-sensor".into(),
             batch_size: 2,
+            layout: caver_sink_parquet::Layout::Native,
             ..Default::default()
         };
         let parquet = Arc::new(caver_sink_parquet::ParquetSink::new(cfg, Some(put_fn)));
-        let sink = Box::new(CaverParquetSink::new(parquet, false));
+        let sink = Box::new(CaverParquetSink::new(parquet, false, false));
 
         let (batch, mut receiver) = BatchNotifier::new_with_receiver();
         let mut log = LogEvent::default();
@@ -221,5 +261,93 @@ mod tests {
             "lake partition layout violated: {key}"
         );
         assert!(*size > 0, "empty parquet object");
+    }
+
+    /// Staging default end-to-end: the PUT lands under the caver_staging key
+    /// layout, partitioned by the event's `timestamp` (aliased to `_time`).
+    #[tokio::test]
+    async fn staging_layout_puts_contract_key_from_event_timestamp() {
+        let captured: Arc<Mutex<Vec<(String, String, usize)>>> = Arc::new(Mutex::new(Vec::new()));
+        let cap = Arc::clone(&captured);
+        let put_fn: caver_sink_parquet::PutFn =
+            Arc::new(move |bucket: &str, key: &str, bytes: Vec<u8>| {
+                cap.lock()
+                    .unwrap()
+                    .push((bucket.to_string(), key.to_string(), bytes.len()));
+                Ok(())
+            });
+
+        let cfg = caver_sink_parquet::Config {
+            bucket: "test-bucket".into(),
+            sensor_id: "test-sensor".into(),
+            batch_size: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.layout,
+            caver_sink_parquet::Layout::CaverStaging,
+            "staging is the crate default"
+        );
+        let parquet = Arc::new(caver_sink_parquet::ParquetSink::new(cfg, Some(put_fn)));
+        let sink = Box::new(CaverParquetSink::new(parquet, false, true));
+
+        let (batch, mut receiver) = BatchNotifier::new_with_receiver();
+        let mut log = LogEvent::default();
+        log.insert("class_uid", "4002");
+        log.insert("message", "hello lake");
+        // 2026-06-12 15:04:05 UTC — flattened by `value_to_string` to RFC 3339,
+        // then aliased to `_time` and used for the year=/month=/day= partition.
+        log.insert(
+            "timestamp",
+            Value::Timestamp(chrono::DateTime::from_timestamp(1781276645, 0).unwrap()),
+        );
+        let log = log.with_batch_notifier(&batch);
+        drop(batch);
+        let input = futures::stream::iter(vec![EventArray::Logs(vec![log])]);
+
+        sink.run(Box::pin(input)).await.unwrap();
+
+        assert_eq!(receiver.try_recv(), Ok(BatchStatus::Delivered));
+        let puts = captured.lock().unwrap();
+        assert_eq!(puts.len(), 1);
+        let (_, key, size) = &puts[0];
+        assert!(
+            key.starts_with(
+                "uf/ocsf/test-sensor/year=2026/month=06/day=12/collector_20260612_150405_"
+            ) && key.ends_with(".parquet"),
+            "caver_staging contract key violated: {key}"
+        );
+        assert!(*size > 0, "empty parquet object");
+    }
+
+    #[test]
+    fn alias_staging_fields_maps_vector_conventions() {
+        // timestamp -> _time, message -> _raw.
+        let mut row = HashMap::from([
+            (
+                "timestamp".to_string(),
+                "2026-06-12T15:04:05.250Z".to_string(),
+            ),
+            ("message".to_string(), "raw line".to_string()),
+        ]);
+        alias_staging_fields(&mut row);
+        assert_eq!(row["_time"], "1781276645.250000");
+        assert_eq!(row["_raw"], "raw line");
+
+        // Explicit `_time`/`_raw` win over the aliases.
+        let mut row = HashMap::from([
+            ("timestamp".to_string(), "2026-06-12T15:04:05Z".to_string()),
+            ("_time".to_string(), "1700000000.0".to_string()),
+            ("message".to_string(), "msg".to_string()),
+            ("_raw".to_string(), "original raw".to_string()),
+        ]);
+        alias_staging_fields(&mut row);
+        assert_eq!(row["_time"], "1700000000.0");
+        assert_eq!(row["_raw"], "original raw");
+
+        // Unparseable timestamp: leave it to the crate's now-default.
+        let mut row = HashMap::from([("timestamp".to_string(), "not-a-date".to_string())]);
+        alias_staging_fields(&mut row);
+        assert!(!row.contains_key("_time"));
     }
 }
