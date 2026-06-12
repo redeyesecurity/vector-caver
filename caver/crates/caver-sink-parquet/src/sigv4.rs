@@ -24,6 +24,25 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
+/// Canonicalize a header value per SigV4: trim, then collapse internal
+/// runs of spaces to a single space (AWS "trimall" semantics).
+fn fold_spaces(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut last_space = false;
+    for c in value.trim().chars() {
+        if c == ' ' {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+        } else {
+            out.push(c);
+            last_space = false;
+        }
+    }
+    out
+}
+
 /// AWS-style URI encoding: RFC 3986 unreserved characters pass through,
 /// everything else is `%XX`-encoded. `/` is preserved unless `encode_slash`.
 pub fn uri_encode(input: &str, encode_slash: bool) -> String {
@@ -47,7 +66,9 @@ pub fn uri_encode(input: &str, encode_slash: bool) -> String {
 ///
 /// * `canonical_path` — already URI-encoded (see [`uri_encode`]), starts with `/`.
 /// * `extra_headers` — additional headers to include in signing (e.g.
-///   `x-amz-security-token`); names are lowercased, values trimmed.
+///   `x-amz-security-token`); names are lowercased, values trimmed and
+///   internal space runs folded to one space (SigV4 canonicalization).
+///   Duplicate header names are NOT supported (each name may appear once).
 ///   `host`, `x-amz-content-sha256` and `x-amz-date` are always signed and
 ///   must be sent on the wire with exactly the values derived here.
 /// * `payload_hash` — lowercase hex SHA-256 of the request body.
@@ -68,12 +89,12 @@ pub fn sign_request(
     let date = timestamp.format("%Y%m%d").to_string();
 
     let mut headers: Vec<(String, String)> = vec![
-        ("host".into(), host.trim().into()),
+        ("host".into(), fold_spaces(host)),
         ("x-amz-content-sha256".into(), payload_hash.into()),
         ("x-amz-date".into(), amz_date.clone()),
     ];
     for (k, v) in extra_headers {
-        headers.push((k.to_ascii_lowercase(), v.trim().to_string()));
+        headers.push((k.to_ascii_lowercase(), fold_spaces(v)));
     }
     headers.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -179,6 +200,27 @@ mod tests {
              SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class, \
              Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd"
         );
+    }
+
+    /// SigV4 canonicalization folds internal space runs: a value with
+    /// doubled spaces must sign identically to its single-space form.
+    #[test]
+    fn header_value_space_runs_fold() {
+        let sign = |v: &str| {
+            sign_request(
+                "GET",
+                "examplebucket.s3.amazonaws.com",
+                "/test.txt",
+                &[("x-amz-meta-note", v)],
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                &doc_ts(),
+                "us-east-1",
+                &doc_creds(),
+            )
+        };
+        assert_eq!(sign("a  b"), sign("a b"));
+        assert_eq!(sign("  a   b  "), sign("a b"));
+        assert_ne!(sign("a b"), sign("ab"), "single spaces are preserved");
     }
 
     #[test]

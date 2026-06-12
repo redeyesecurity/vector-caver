@@ -391,6 +391,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "ureq",
+ "url",
  "uuid",
 ]
 

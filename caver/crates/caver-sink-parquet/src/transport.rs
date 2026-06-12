@@ -3,8 +3,8 @@
 //! Sync (`ureq`) like the rest of the caver workspace — no async runtime.
 //! Credentials are resolved from environment variables whose *names* come
 //! from config (never literal values), matching the search-peer `token_env`
-//! convention. Retries 5xx/transport errors with exponential backoff; 4xx
-//! fail immediately (auth/config problems don't heal by retrying).
+//! convention. Retries 5xx/3xx/transport errors with exponential backoff;
+//! 4xx fail immediately (auth/config problems don't heal by retrying).
 
 use crate::sigv4::{sha256_hex, sign_request, uri_encode, Credentials};
 use crate::sink::PutFn;
@@ -12,10 +12,15 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Backoff between retries never exceeds this, whatever the knobs say.
+const MAX_BACKOFF_MS: u64 = 30_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     #[error("credentials: env var {0} is unset or empty")]
     MissingCredentials(String),
+    #[error("endpoint: {0}")]
+    BadEndpoint(String),
     #[error("s3 put failed after {attempts} attempt(s): {last}")]
     PutFailed { attempts: u32, last: String },
 }
@@ -34,7 +39,8 @@ pub struct S3Config {
     pub session_token_env: Option<String>,
     /// Retries after the first attempt (total attempts = max_retries + 1).
     pub max_retries: u32,
-    /// Backoff before retry N is `retry_base_ms * 2^(N-1)`.
+    /// Backoff before retry N is `retry_base_ms * 2^(N-1)`, capped at
+    /// [`MAX_BACKOFF_MS`].
     pub retry_base_ms: u64,
     pub timeout_ms: u64,
 }
@@ -61,17 +67,32 @@ fn require_env(name: &str) -> Result<String, TransportError> {
     }
 }
 
-/// `scheme://host[:port][...]` → `host[:port]` as ureq will send it in the
-/// Host header (the `url` crate drops scheme-default ports, so must we —
-/// the signed host header has to match the wire byte-for-byte).
-fn host_from_base(base: &str) -> String {
-    let no_scheme = base.split("://").nth(1).unwrap_or(base);
-    let host = no_scheme.split('/').next().unwrap_or(no_scheme);
-    if base.starts_with("https://") {
-        host.strip_suffix(":443").unwrap_or(host).into()
-    } else {
-        host.strip_suffix(":80").unwrap_or(host).into()
+/// Parse + normalize the endpoint with the same `url` crate ureq uses, so
+/// the host we sign is byte-for-byte the Host header ureq puts on the wire
+/// (lowercased host, scheme-default ports dropped, IPv6 brackets kept).
+/// Returns `(base, host)`: `scheme://host[:port]` and `host[:port]`.
+fn parse_endpoint(endpoint: &str) -> Result<(String, String), TransportError> {
+    let u = url::Url::parse(endpoint)
+        .map_err(|e| TransportError::BadEndpoint(format!("{endpoint}: {e}")))?;
+    if u.scheme() != "http" && u.scheme() != "https" {
+        return Err(TransportError::BadEndpoint(format!(
+            "{endpoint}: scheme must be http or https"
+        )));
     }
+    if !u.username().is_empty() || u.password().is_some() {
+        return Err(TransportError::BadEndpoint(format!(
+            "{endpoint}: userinfo not allowed in endpoint"
+        )));
+    }
+    let host = u
+        .host_str()
+        .ok_or_else(|| TransportError::BadEndpoint(format!("{endpoint}: missing host")))?;
+    // `Url::port()` is None for the scheme default — matching what ureq sends.
+    let hostport = match u.port() {
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_string(),
+    };
+    Ok((format!("{}://{hostport}", u.scheme()), hostport))
 }
 
 pub struct S3Transport {
@@ -85,8 +106,8 @@ pub struct S3Transport {
 }
 
 impl S3Transport {
-    /// Resolves credentials from the configured env vars now (fail fast at
-    /// sink construction, not on the first flush).
+    /// Resolves credentials from the configured env vars and validates the
+    /// endpoint now (fail fast at sink construction, not on the first flush).
     pub fn from_config(cfg: S3Config) -> Result<Self, TransportError> {
         let access_key = require_env(&cfg.access_key_env)?;
         let secret_key = require_env(&cfg.secret_key_env)?;
@@ -94,11 +115,11 @@ impl S3Transport {
             Some(name) => std::env::var(name).ok().filter(|v| !v.is_empty()),
             None => None,
         };
-        let base = match &cfg.endpoint {
-            Some(e) => e.trim_end_matches('/').to_string(),
+        let endpoint = match &cfg.endpoint {
+            Some(e) => e.clone(),
             None => format!("https://s3.{}.amazonaws.com", cfg.region),
         };
-        let host = host_from_base(&base);
+        let (base, host) = parse_endpoint(&endpoint)?;
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_millis(cfg.timeout_ms))
             .build();
@@ -117,16 +138,25 @@ impl S3Transport {
 
     /// PUT `body` to `s3://bucket/key` (path-style). Re-signs each attempt so
     /// long backoffs can't push `x-amz-date` outside the 15-minute skew window.
+    ///
+    /// `key` must not contain `.`/`..` path segments — the `url` crate would
+    /// normalize them on the wire while the signature covers the raw path
+    /// (keys from [`crate::partition::build_key`] can never contain them).
     pub fn put(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), TransportError> {
         let path = format!("/{}/{}", uri_encode(bucket, true), uri_encode(key, false));
         let url = format!("{}{}", self.base, path);
         let payload_hash = sha256_hex(body);
 
-        let attempts = self.cfg.max_retries + 1;
+        let attempts = self.cfg.max_retries.saturating_add(1);
         let mut last = String::new();
         for attempt in 0..attempts {
             if attempt > 0 {
-                let backoff = self.cfg.retry_base_ms.saturating_mul(1 << (attempt - 1));
+                let factor = 1u64.checked_shl(attempt - 1).unwrap_or(u64::MAX);
+                let backoff = self
+                    .cfg
+                    .retry_base_ms
+                    .saturating_mul(factor)
+                    .min(MAX_BACKOFF_MS);
                 std::thread::sleep(Duration::from_millis(backoff));
             }
             let now = Utc::now();
@@ -157,7 +187,18 @@ impl S3Transport {
             }
 
             match req.send_bytes(body) {
-                Ok(_) => return Ok(()),
+                // ureq only maps >=400 to Error::Status, and it does NOT
+                // follow redirects for a PUT with a body — a 3xx here (AWS
+                // 307 during new-bucket DNS propagation, 301 wrong-region)
+                // means nothing was written. Never count it as success.
+                Ok(resp) if (200..300).contains(&resp.status()) => return Ok(()),
+                Ok(resp) => {
+                    let code = resp.status();
+                    let loc = resp.header("location").unwrap_or("-").to_string();
+                    // 307 heals once DNS propagates → keep (bounded) retrying;
+                    // 301 won't, but it still ends in the DLQ after the cap.
+                    last = format!("HTTP {code} (redirect, not followed; location: {loc})");
+                }
                 Err(ureq::Error::Status(code, resp)) => {
                     let body_snip: String = resp
                         .into_string()
@@ -193,6 +234,11 @@ pub fn s3_put_fn(cfg: S3Config) -> Result<PutFn, TransportError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `std::env::set_var` + libc `getenv` from parallel test threads is the
+    /// classic setenv race — serialize every test that touches the env.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_cfg(server_url: &str, ak_env: &str, sk_env: &str) -> S3Config {
         std::env::set_var(ak_env, "testak");
@@ -209,6 +255,7 @@ mod tests {
 
     #[test]
     fn put_success_signed_path_style() {
+        let _g = ENV_LOCK.lock().unwrap();
         let mut server = mockito::Server::new();
         let m = server
             .mock(
@@ -244,6 +291,7 @@ mod tests {
 
     #[test]
     fn put_retries_on_5xx() {
+        let _g = ENV_LOCK.lock().unwrap();
         let mut server = mockito::Server::new();
         // max_retries=2 → exactly 3 attempts.
         let m = server
@@ -262,6 +310,7 @@ mod tests {
 
     #[test]
     fn put_does_not_retry_4xx() {
+        let _g = ENV_LOCK.lock().unwrap();
         let mut server = mockito::Server::new();
         let m = server
             .mock("PUT", mockito::Matcher::Any)
@@ -276,8 +325,33 @@ mod tests {
         assert!(err.to_string().contains("after 1 attempt(s)"), "{err}");
     }
 
+    /// A 3xx comes back as Ok(Response) from ureq (no redirect-follow for
+    /// PUT-with-body) — it must NOT be treated as a successful write.
+    /// AWS really does this: 307 on new-bucket DNS propagation, 301 on
+    /// wrong-region path-style.
+    #[test]
+    fn put_treats_3xx_as_failure_and_retries() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let mut server = mockito::Server::new();
+        let m = server
+            .mock("PUT", mockito::Matcher::Any)
+            .with_status(307)
+            .with_header("location", "http://elsewhere.example/lake/k")
+            .expect(3)
+            .create();
+
+        let t = S3Transport::from_config(test_cfg(&server.url(), "T895_AK_3XX", "T895_SK_3XX"))
+            .unwrap();
+        let err = t.put("lake", "k", b"x").unwrap_err();
+        m.assert();
+        assert!(err.to_string().contains("after 3 attempt(s)"), "{err}");
+        assert!(err.to_string().contains("HTTP 307"), "{err}");
+        assert!(err.to_string().contains("elsewhere.example"), "{err}");
+    }
+
     #[test]
     fn missing_credentials_fail_fast() {
+        let _g = ENV_LOCK.lock().unwrap();
         let cfg = S3Config {
             access_key_env: "T895_DOES_NOT_EXIST".into(),
             ..Default::default()
@@ -292,21 +366,46 @@ mod tests {
     }
 
     #[test]
-    fn host_from_base_strips_default_ports_only() {
+    fn endpoint_parsing_matches_wire_host() {
+        // Scheme-default ports dropped; explicit non-default ports kept.
         assert_eq!(
-            host_from_base("http://192.168.1.30:9000"),
-            "192.168.1.30:9000"
+            parse_endpoint("http://192.168.1.30:9000").unwrap(),
+            (
+                "http://192.168.1.30:9000".into(),
+                "192.168.1.30:9000".into()
+            )
         );
         assert_eq!(
-            host_from_base("https://s3.us-east-1.amazonaws.com"),
-            "s3.us-east-1.amazonaws.com"
+            parse_endpoint("https://s3.us-east-1.amazonaws.com").unwrap(),
+            (
+                "https://s3.us-east-1.amazonaws.com".into(),
+                "s3.us-east-1.amazonaws.com".into()
+            )
         );
-        assert_eq!(host_from_base("https://example.com:443"), "example.com");
-        assert_eq!(host_from_base("http://example.com:80"), "example.com");
+        assert_eq!(
+            parse_endpoint("https://example.com:443/").unwrap().1,
+            "example.com"
+        );
+        assert_eq!(
+            parse_endpoint("http://example.com:80").unwrap().1,
+            "example.com"
+        );
+        // The url crate lowercases hosts on the wire — so must the signed host.
+        assert_eq!(
+            parse_endpoint("http://MinIO.Local:9000").unwrap().1,
+            "minio.local:9000"
+        );
+        // IPv6 keeps brackets, exactly as ureq writes the Host header.
+        assert_eq!(parse_endpoint("http://[::1]:9000").unwrap().1, "[::1]:9000");
+        // Garbage fails fast at construction instead of retrying forever.
+        assert!(parse_endpoint("192.168.1.30:9000").is_err());
+        assert!(parse_endpoint("ftp://example.com").is_err());
+        assert!(parse_endpoint("http://user@example.com:9000").is_err());
     }
 
     #[test]
     fn s3_put_fn_wires_transport() {
+        let _g = ENV_LOCK.lock().unwrap();
         let mut server = mockito::Server::new();
         let m = server.mock("PUT", "/b/k.parquet").with_status(200).create();
         let put = s3_put_fn(test_cfg(&server.url(), "T895_AK_FN", "T895_SK_FN")).unwrap();

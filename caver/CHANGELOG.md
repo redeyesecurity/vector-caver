@@ -7,12 +7,16 @@
   - `transport::S3Config` — endpoint (MinIO/path-style or AWS-default), region,
     credentials via env-var **names** (`access_key_env`/`secret_key_env`/optional
     `session_token_env`, search-peer `token_env` convention), retry knobs, timeout
-  - `transport::S3Transport::put` — signed path-style PutObject; exponential-backoff
-    retry on 5xx/transport errors, immediate fail on 4xx; re-signs each attempt
+  - `transport::S3Transport::put` — signed path-style PutObject; only 2xx is
+    success — 3xx (AWS 307/301 redirects, not followed for PUT) and 5xx/transport
+    errors retry with exponential backoff (capped 30s), 4xx fails immediately;
+    re-signs each attempt; endpoint validated/normalized via `url` at build time
   - `transport::s3_put_fn` — builds a ready `PutFn` for `ParquetSink::new`
   - `sigv4` — minimal AWS Signature V4 (header auth, service=s3), pinned against
-    both official AWS doc examples (GET + PUT `test$file.text`)
-  - 13 new tests (sigv4 vectors, mockito wire tests incl. retry/no-retry-4xx, DLQ path)
+    both official AWS doc examples (GET + PUT `test$file.text`); header values
+    canonicalized (trim + space-run folding)
+  - 13 new tests (sigv4 vectors incl. space-folding, mockito wire tests incl.
+    retry/no-retry-4xx/307-as-failure, endpoint parsing, DLQ path)
 
 ### Changed
 - `caver-sink-parquet`: **`PutFn` is now fallible** — `Fn(&str, &str, Vec<u8>) -> Result<(), String>`.
