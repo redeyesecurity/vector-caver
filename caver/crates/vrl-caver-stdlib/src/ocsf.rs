@@ -94,21 +94,16 @@ pub fn severity_id_name(s: &str) -> (u32, &'static str) {
 // ---------------------------------------------------------------------------
 
 /// EventID from either the raw `EventID` (Windows shape) or the
-/// parse_winevent/parse_sysmon `event_id` key; numeric or numeric-string.
+/// parse_winevent/parse_sysmon `event_id` key.
+///
+/// Mirrors Python `_winevent_refine`:
+/// `int(str(EventID or event_id or "").strip())` — a truthiness chain
+/// (`EventID: 0` falls through to `event_id`), `str()` rendering, then a
+/// strict int parse (a float `1.0` renders `"1.0"` and fails, so the caller
+/// falls back to the coarse map, exactly like Python's `ValueError` path).
 fn event_id_of(event: &Value) -> Option<u64> {
-    for key in ["EventID", "event_id"] {
-        if let Some(v) = event.get(key) {
-            if let Some(n) = v.as_u64() {
-                return Some(n);
-            }
-            if let Some(s) = v.as_str() {
-                if let Ok(n) = s.trim().parse::<u64>() {
-                    return Some(n);
-                }
-            }
-        }
-    }
-    None
+    let v = first_truthy(event, &["EventID", "event_id"])?;
+    value_to_string(v).trim().parse::<u64>().ok()
 }
 
 fn classify_okta(event: &Value) -> (u32, u32) {
@@ -138,7 +133,24 @@ fn classify_sysmon(event: &Value) -> (u32, u32) {
 /// Windows Security-channel EventID → (class_uid, category_uid), mirroring
 /// the Python `_SECURITY_EVENTID_CLASS` table (#780). Unmapped EventIDs fall
 /// through to the coarse WinEventLog mapping (1007, 1).
+///
+/// Python `_winevent_refine` applies the Security table only when
+/// `"security" in ProviderName.lower()` or the sourcetype is
+/// `wineventlog:security`; any other channel gets the coarse (1007, 1). The
+/// parser-bridge equivalents are the `provider`/`ProviderName` and
+/// `channel`/`Channel` fields (parse_winevent emits the lowercase pair).
 fn classify_winevent(event: &Value) -> (u32, u32) {
+    let provider = first_truthy(event, &["ProviderName", "provider"])
+        .map(value_to_string)
+        .unwrap_or_default()
+        .to_lowercase();
+    let channel = first_truthy(event, &["Channel", "channel"])
+        .map(value_to_string)
+        .unwrap_or_default()
+        .to_lowercase();
+    if !provider.contains("security") && channel != "security" {
+        return (1007, 1); // coarse — Security table is Security-channel-only
+    }
     match event_id_of(event) {
         Some(4624) | Some(4625) | Some(4634) | Some(4647) => (3002, 3), // logon/logoff
         Some(4672) => (3003, 3), // special privileges -> Authorize Session (T1078)
@@ -151,13 +163,11 @@ fn classify_winevent(event: &Value) -> (u32, u32) {
 
 /// Every Suricata EVE record is network telemetry → 4001 Network Activity;
 /// a record without an `event_type` discriminator is unclassifiable
-/// (Python normalize() returns {} for it).
+/// (Python normalize() returns {} for it). The Python gate is
+/// `str(event.get("event_type") or "")` — truthiness, not string-typed:
+/// a numeric `event_type: 5` classifies and renders as `"5"`.
 fn classify_suricata(event: &Value) -> (u32, u32) {
-    let has_event_type = event
-        .get("event_type")
-        .and_then(Value::as_str)
-        .is_some_and(|s| !s.is_empty());
-    if has_event_type {
+    if event.get("event_type").is_some_and(is_truthy) {
         (4001, 4)
     } else {
         (0, 0)
@@ -343,6 +353,10 @@ fn days_in_month(y: i64, m: u32) -> i64 {
 }
 
 /// Number of days from Unix epoch (1970-01-01) to the given date.
+///
+/// Callers clamp the year (see `parse_ymd_hms`), so the per-year loop is
+/// bounded; without the clamp a forged timestamp with year `9999999999`
+/// would spin ~10^10 iterations on attacker-controlled input.
 fn days_from_epoch(year: i64, month: u32, day: u32) -> i64 {
     let mut d = 0i64;
     for y in 1970..year {
@@ -379,6 +393,10 @@ fn parse_sysmon_ts(s: &str) -> Option<i64> {
 fn parse_ymd_hms(date: &str, sep: char, time: &str) -> Option<i64> {
     let mut dp = date.splitn(3, sep);
     let year: i64 = dp.next()?.parse().ok()?;
+    // Bound days_from_epoch's per-year loop against forged huge years.
+    if !(1970..=9999).contains(&year) {
+        return None;
+    }
     let month: u32 = dp.next()?.parse().ok()?;
     let day: u32 = dp.next()?.parse().ok()?;
 
@@ -417,6 +435,10 @@ fn parse_clf(s: &str) -> Option<i64> {
     let rest = parts.next()?;
     let (year_s, time_s) = rest.split_once(':')?;
     let year: i64 = year_s.parse().ok()?;
+    // Bound days_from_epoch's per-year loop against forged huge years.
+    if !(1970..=9999).contains(&year) {
+        return None;
+    }
     let mut tp = time_s.splitn(3, ':');
     let h: u32 = tp.next()?.parse().ok()?;
     let min: u32 = tp.next()?.parse().ok()?;
@@ -483,13 +505,42 @@ fn is_truthy(v: &Value) -> bool {
     }
 }
 
-/// Python `str(v)` for scalar JSON values.
+/// Python `str(v)` for JSON values: bools render `True`/`False`, null
+/// renders `None`, and containers render with Python `repr` punctuation
+/// (`['a']`, `{'k': 1}`) — not JSON (`true`, `["a"]`).
 fn value_to_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        other => other.to_string(),
+        Value::Bool(b) => (if *b { "True" } else { "False" }).to_string(),
+        Value::Null => "None".to_string(),
+        Value::Array(_) | Value::Object(_) => python_repr(v),
+    }
+}
+
+/// Python `repr(v)` for JSON values nested inside containers: strings get
+/// single quotes (escaping `\` and `'`), scalars render like `str()`.
+fn python_repr(v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")),
+        Value::Array(a) => {
+            let items: Vec<String> = a.iter().map(python_repr).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Object(o) => {
+            let items: Vec<String> = o
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "'{}': {}",
+                        k.replace('\\', "\\\\").replace('\'', "\\'"),
+                        python_repr(v)
+                    )
+                })
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        scalar => value_to_string(scalar),
     }
 }
 
@@ -552,14 +603,20 @@ fn any_f64(v: &Value) -> Option<f64> {
 /// Mirror Python ocsf_classify for vendors without a dedicated normalizer:
 /// the event passes through unchanged except for `class_uid` and
 /// `category_uid`. The `_vendor` routing tag is internal and dropped.
+///
+/// Python no-ops on an already-classified event
+/// (`if ev.fields.get("class_uid"): return ev` — truthiness, so a pre-set
+/// `class_uid: 0` does NOT suppress classification).
 fn classify_passthrough(event: &Value, class_uid: u32, category_uid: u32) -> Value {
     let mut map = match event {
         Value::Object(o) => o.clone(),
         _ => Map::new(),
     };
     map.remove("_vendor");
-    map.insert("class_uid".into(), json!(class_uid));
-    map.insert("category_uid".into(), json!(category_uid));
+    if !map.get("class_uid").is_some_and(is_truthy) {
+        map.insert("class_uid".into(), json!(class_uid));
+        map.insert("category_uid".into(), json!(category_uid));
+    }
     Value::Object(map)
 }
 
@@ -885,12 +942,14 @@ fn normalize_suricata(event: &Value) -> Value {
     let mut out = Map::new();
     out.insert("class_uid".into(), json!(4001));
     out.insert("class_name".into(), json!("Network Activity"));
+    // Python: `str(event.get("event_type") or "")` — classify_suricata has
+    // already guaranteed truthiness, so str() the raw value (5 → "5").
     out.insert(
         "suri_event_type".into(),
         json!(event
             .get("event_type")
-            .and_then(Value::as_str)
-            .unwrap_or("")),
+            .map(value_to_string)
+            .unwrap_or_default()),
     );
 
     if let Some(p) = truthy_string(event, "proto") {
@@ -1081,7 +1140,15 @@ fn normalize_zeek(event: &Value) -> Value {
             if let Some(v) = first_truthy(event, &["filename", "name"]) {
                 out.insert("file.name".into(), json!(value_to_string(v)));
             }
-            if let Some(n) = first_truthy(event, &["total_bytes", "size"]).and_then(any_i64) {
+            // Python: `(v := total_bytes or size) is not None` then `int(v)` —
+            // the or-chain falls back to `size` even when falsy, so
+            // `size: 0` (with total_bytes absent) emits `file.size: 0`.
+            let size_v = event
+                .get("total_bytes")
+                .filter(|v| is_truthy(v))
+                .or_else(|| event.get("size"))
+                .filter(|v| !v.is_null());
+            if let Some(n) = size_v.and_then(any_i64) {
                 out.insert("file.size".into(), json!(n));
             }
             lift_str(&mut out, event, "md5", "file.md5");
@@ -1301,7 +1368,13 @@ const FORTI_BLOCK_ACTIONS: &[&str] = &[
 ];
 
 fn fortinet_severity(event: &Value) -> i64 {
-    let utm_sev = pick_string(event, &["crseverity", "severity"]).to_lowercase();
+    // Python `_severity` uses truthiness or-chains, not `_get`:
+    // `str(record.get("crseverity") or record.get("severity") or "").lower()`
+    // — so `crseverity: 0, severity: "high"` reads "high" (4), not "" (2).
+    let utm_sev = first_truthy(event, &["crseverity", "severity"])
+        .map(value_to_string)
+        .unwrap_or_default()
+        .to_lowercase();
     let base = match utm_sev.as_str() {
         "critical" => Some(5),
         "high" => Some(4),
@@ -1310,18 +1383,23 @@ fn fortinet_severity(event: &Value) -> i64 {
         "info" | "informational" => Some(1),
         _ => None,
     };
-    let mut base =
-        base.unwrap_or_else(
-            || match pick_string(event, &["level"]).to_lowercase().as_str() {
-                "emergency" | "alert" | "critical" => 5,
-                "error" => 4,
-                "warning" => 3,
-                "notice" | "information" | "info" => 2,
-                "debug" => 1,
-                _ => 2,
-            },
-        );
-    let action = pick_string(event, &["action"]).to_lowercase();
+    let mut base = base.unwrap_or_else(|| {
+        match truthy_string(event, "level")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "emergency" | "alert" | "critical" => 5,
+            "error" => 4,
+            "warning" => 3,
+            "notice" | "information" | "info" => 2,
+            "debug" => 1,
+            _ => 2,
+        }
+    });
+    let action = truthy_string(event, "action")
+        .unwrap_or_default()
+        .to_lowercase();
     if FORTI_BLOCK_ACTIONS.contains(&action.as_str()) {
         base = base.max(3);
     }
@@ -1455,6 +1533,18 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_parsers_reject_out_of_range_years() {
+        // days_from_epoch loops per-year; a forged year like 9999999999 would
+        // spin ~10^10 iterations. Out-of-range years must return None fast.
+        assert_eq!(parse_iso8601("9999999999-05-28T10:00:00.000Z"), None);
+        assert_eq!(parse_clf("28/May/9999999999:10:00:00 +0000"), None);
+        assert_eq!(parse_iso8601("1969-05-28T10:00:00.000Z"), None);
+        // boundary years still parse
+        assert!(parse_iso8601("1970-01-02T00:00:00.000Z").is_some());
+        assert!(parse_iso8601("9999-01-02T00:00:00.000Z").is_some());
+    }
+
+    #[test]
     fn parse_sysmon_ts_roundtrip() {
         let ms = parse_sysmon_ts("2026-05-28 10:00:00.000");
         assert_eq!(ms, Some(1_779_962_400_000));
@@ -1515,9 +1605,44 @@ mod tests {
             (4756, 3001),
             (5156, 1007), // unmapped -> coarse fallback
         ] {
-            let ev = json!({"_vendor": "winevent", "event_id": eid});
+            let ev = json!({"_vendor": "winevent", "event_id": eid, "channel": "Security"});
             assert_eq!(classify(&ev), cls, "winevent EventID {eid}");
         }
+    }
+
+    #[test]
+    fn classify_winevent_security_table_is_channel_gated() {
+        // Python _winevent_refine only consults the Security EventID table when
+        // "security" is in the provider OR the sourcetype is the Security
+        // channel; any other channel falls through to coarse (1007, 1).
+        let ev = json!({"_vendor": "winevent", "event_id": 4624, "channel": "System"});
+        assert_eq!(classify(&ev), 1007, "non-Security channel must be coarse");
+        let ev = json!({"_vendor": "winevent", "event_id": 4624});
+        assert_eq!(classify(&ev), 1007, "missing channel must be coarse");
+        // provider containing "security" also opens the table
+        let ev = json!({"_vendor": "winevent", "event_id": 4624,
+                        "ProviderName": "Microsoft-Windows-Security-Auditing"});
+        assert_eq!(classify(&ev), 3002, "security provider opens the table");
+    }
+
+    #[test]
+    fn classify_winevent_eventid_truthiness_and_strict_int() {
+        // Python: ev.fields.get("EventID") or ev.fields.get("event_id") —
+        // EventID 0 is falsy, so the chain falls through to event_id.
+        let ev = json!({"_vendor": "winevent", "EventID": 0, "event_id": 4624,
+                        "channel": "Security"});
+        assert_eq!(
+            classify(&ev),
+            3002,
+            "EventID 0 must fall through to event_id"
+        );
+        // Python int("4624.0") raises -> None -> coarse; floats never refine.
+        let ev = json!({"_vendor": "winevent", "event_id": 4624.0, "channel": "Security"});
+        assert_eq!(
+            classify(&ev),
+            1007,
+            "float EventID must fall back to coarse"
+        );
     }
 
     #[test]
@@ -1762,5 +1887,88 @@ mod tests {
         assert_eq!(out["fortinet_user"], "alice");
         assert_eq!(out["actor.user.name"], "alice");
         assert_eq!(out["fortinet_attack"], "Backdoor.Rev.Shell");
+    }
+
+    #[test]
+    fn normalize_fortinet_severity_truthiness_chain() {
+        // Python: str(record.get("crseverity") or record.get("severity") or "")
+        // — a falsy crseverity (0, "") falls through to severity. A literal
+        // first-key-wins lookup would read "0" and downgrade High to default.
+        let ev = json!({"_vendor": "fortinet", "logid": "0419016384", "type": "utm",
+                        "subtype": "ips", "crseverity": 0, "severity": "high",
+                        "attack": "x"});
+        let out = normalize(&ev);
+        assert_eq!(
+            out["severity_id"], 4,
+            "crseverity 0 must fall through to severity"
+        );
+    }
+
+    #[test]
+    fn normalize_zeek_files_size_zero_or_chain() {
+        // Python: (event.get("total_bytes") or event.get("size")) is not None
+        // — total_bytes 0 is falsy and falls through to size; size 0 itself
+        // still emits file.size: 0 (the chain checks is-not-None, not truthy).
+        let ev = json!({"_vendor": "zeek", "_path": "files", "fuid": "F1",
+                        "total_bytes": 0, "size": 7});
+        let out = normalize(&ev);
+        assert_eq!(
+            out["file.size"], 7,
+            "total_bytes 0 must fall through to size"
+        );
+        let ev = json!({"_vendor": "zeek", "_path": "files", "fuid": "F1", "size": 0});
+        let out = normalize(&ev);
+        assert_eq!(out["file.size"], 0, "size 0 must still emit file.size");
+        let ev = json!({"_vendor": "zeek", "_path": "files", "fuid": "F1"});
+        let out = normalize(&ev);
+        assert!(
+            out.get("file.size").is_none(),
+            "no size fields -> no file.size"
+        );
+    }
+
+    #[test]
+    fn normalize_suricata_numeric_event_type() {
+        // Python: str(event.get("event_type") or "") — a numeric event_type is
+        // truthy (classifies 4001) and renders via str() as "5".
+        let ev = json!({"_vendor": "suricata", "event_type": 5});
+        assert_eq!(classify(&ev), 4001);
+        let out = normalize(&ev);
+        assert_eq!(out["suri_event_type"], "5");
+        // event_type 0 is falsy -> unclassified, like missing
+        let ev = json!({"_vendor": "suricata", "event_type": 0});
+        assert_eq!(classify(&ev), 0);
+    }
+
+    #[test]
+    fn normalize_passthrough_preserves_preset_class_uid() {
+        // Python ocsf_classify: `if ev.fields.get("class_uid"): return ev` —
+        // a truthy pre-set class_uid is a no-op; class_uid 0 does NOT suppress.
+        let ev = json!({"_vendor": "winevent", "event_id": 4624,
+                        "channel": "Security", "class_uid": 9001, "category_uid": 9});
+        let out = normalize(&ev);
+        assert_eq!(
+            out["class_uid"], 9001,
+            "truthy pre-set class_uid must be kept"
+        );
+        assert_eq!(out["category_uid"], 9);
+        assert!(out.get("_vendor").is_none(), "_vendor still dropped");
+        let ev = json!({"_vendor": "winevent", "event_id": 4624,
+                        "channel": "Security", "class_uid": 0});
+        let out = normalize(&ev);
+        assert_eq!(
+            out["class_uid"], 3002,
+            "class_uid 0 must NOT suppress classify"
+        );
+    }
+
+    #[test]
+    fn value_to_string_renders_like_python_str() {
+        // str(True) == "True", str(None) == "None", str([1, 'a']) == "[1, 'a']"
+        assert_eq!(value_to_string(&json!(true)), "True");
+        assert_eq!(value_to_string(&json!(false)), "False");
+        assert_eq!(value_to_string(&json!(null)), "None");
+        assert_eq!(value_to_string(&json!([1, "a"])), "[1, 'a']");
+        assert_eq!(value_to_string(&json!({"k": "v"})), "{'k': 'v'}");
     }
 }
