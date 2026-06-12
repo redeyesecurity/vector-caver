@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.11.0] - 2026-06-12
+
+### Fixed
+- **Contract-fidelity follow-ups from the #897 adversarial review**
+  (caver-collector#900) — eight divergences from the Python collector
+  transforms pinned byte-for-byte, each with a regression test:
+  - winevent: Security EventID table is now Security-channel-gated
+    (provider contains "security" OR channel is Security); other channels
+    classify coarse (1007, 1) like `_winevent_refine`
+  - winevent: EventID lookup is a truthiness or-chain (`EventID` 0 falls
+    through to `event_id`) with strict-int parse (float EventID → coarse)
+  - suricata: `event_type` gate is Python-truthiness (numeric 5 classifies,
+    0 does not); `suri_event_type` rendered via `str()` semantics
+  - classify passthrough: a pre-set truthy `class_uid` is a no-op;
+    `class_uid: 0` does NOT suppress classification
+  - fortinet: severity lookups are truthiness chains — `crseverity: 0`
+    falls through to `severity` (no more High → default downgrade)
+  - zeek files: `total_bytes`-or-`size` chain matches Python (`size: 0`
+    still emits `file.size: 0`)
+  - `value_to_string` renders like Python `str()`: `True`/`False`/`None`,
+    containers via repr punctuation (`[1, 'a']`, `{'k': 'v'}`)
+  - `parse_ymd_hms`/`parse_clf` clamp the year to 1970..=9999 so a forged
+    timestamp can't spin `days_from_epoch` ~10^10 iterations
+- `normalise_zeek_json` no longer fabricates `src_ip: ""`/`src_port: 0` —
+  connection-tuple keys are omitted when absent from the input
+- golden tests: hand-listed per-fixture snapshot tests replaced by a
+  directory-derived suite (new fixtures are covered automatically)
+
 ## [0.10.0] - 2026-06-12
 
 ### Added

@@ -1,9 +1,13 @@
+#![allow(clippy::print_stdout)] // test summary lines, per repo test convention
+
 //! Golden-fixture tests for vrl-caver-stdlib OCSF normalization.
 //!
 //! Two test suites:
 //!   golden_fixtures_are_valid — structural lint (every fixture parses and
 //!     declares a non-zero class_uid)
-//!   golden_{fixture} — snapshot tests that call normalize() and diff vs out.json
+//!   golden_snapshots_all_fixtures — snapshot test that calls normalize() on
+//!     every fixture directory and diffs vs out.json (directory-derived, so
+//!     new fixtures are covered automatically)
 //!
 //! Fixture directories are vendor-keyed (`<vendor>_<scenario>/`), not
 //! class_uid-keyed: several vendors share one OCSF class (zeek conn and
@@ -96,68 +100,55 @@ fn golden_fixtures_are_valid() {
 // Snapshot tests — call normalize() and assert output matches out.json
 // ---------------------------------------------------------------------------
 
-fn run_normalize_snapshot(fixture: &str) {
+fn check_normalize_snapshot(fixture: &str) -> Result<(), String> {
     let dir = golden_dir().join(fixture);
     let in_val = load_json(&dir.join("in.json"));
     let expected = load_json(&dir.join("out.json"));
     let actual = ocsf::normalize(&in_val);
-    assert_eq!(
-        actual,
-        expected,
+    if actual == expected {
+        return Ok(());
+    }
+    Err(format!(
         "normalize() mismatch for fixture {fixture}\n\
          actual:\n{}\n\
          expected:\n{}",
         serde_json::to_string_pretty(&actual).unwrap(),
         serde_json::to_string_pretty(&expected).unwrap(),
+    ))
+}
+
+/// Snapshot every fixture directory — derived from the directory listing, so
+/// a newly added `<vendor>_<scenario>/` is covered without touching this
+/// file (a hand-listed test per fixture would silently skip new ones).
+#[test]
+fn golden_snapshots_all_fixtures() {
+    let dir = golden_dir();
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| {
+            let e = e.unwrap();
+            e.path()
+                .is_dir()
+                .then(|| e.file_name().to_string_lossy().to_string())
+        })
+        .collect();
+    names.sort();
+    assert!(
+        !names.is_empty(),
+        "no fixture directories found under {}",
+        dir.display()
     );
-}
 
-#[test]
-fn golden_okta_auth() {
-    run_normalize_snapshot("okta_auth");
-}
-
-#[test]
-fn golden_nginx_http() {
-    run_normalize_snapshot("nginx_http");
-}
-
-#[test]
-fn golden_sysmon_process_create() {
-    run_normalize_snapshot("sysmon_process_create");
-}
-
-#[test]
-fn golden_suricata_alert() {
-    run_normalize_snapshot("suricata_alert");
-}
-
-#[test]
-fn golden_zeek_conn() {
-    run_normalize_snapshot("zeek_conn");
-}
-
-#[test]
-fn golden_zeek_dns() {
-    run_normalize_snapshot("zeek_dns");
-}
-
-#[test]
-fn golden_palo_alto_traffic() {
-    run_normalize_snapshot("palo_alto_traffic");
-}
-
-#[test]
-fn golden_palo_alto_threat() {
-    run_normalize_snapshot("palo_alto_threat");
-}
-
-#[test]
-fn golden_fortinet_traffic() {
-    run_normalize_snapshot("fortinet_traffic");
-}
-
-#[test]
-fn golden_fortinet_event_auth() {
-    run_normalize_snapshot("fortinet_event_auth");
+    let failures: Vec<String> = names
+        .iter()
+        .filter_map(|name| check_normalize_snapshot(name).err())
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {} fixture snapshot(s) failed:\n\n{}",
+        failures.len(),
+        names.len(),
+        failures.join("\n\n")
+    );
+    println!("golden: {} fixture snapshot(s) verified", names.len());
 }

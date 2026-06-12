@@ -143,10 +143,6 @@ fn normalise_zeek_json(v: Value, log_type: &str) -> Value {
     // common fields into the top level for uniform downstream consumption.
     let ts = v.get("ts").and_then(Value::as_f64).unwrap_or(0.0);
     let uid = v.get("uid").and_then(Value::as_str).unwrap_or("");
-    let orig_h = v.get("id.orig_h").and_then(Value::as_str).unwrap_or("");
-    let orig_p = v.get("id.orig_p").and_then(Value::as_u64).unwrap_or(0);
-    let resp_h = v.get("id.resp_h").and_then(Value::as_str).unwrap_or("");
-    let resp_p = v.get("id.resp_p").and_then(Value::as_u64).unwrap_or(0);
     let proto = v.get("proto").and_then(Value::as_str).unwrap_or("");
 
     let mut out = json!({
@@ -154,12 +150,25 @@ fn normalise_zeek_json(v: Value, log_type: &str) -> Value {
         "log_type": log_type,
         "ts":       ts,
         "uid":      uid,
-        "src_ip":   orig_h,
-        "src_port": orig_p,
-        "dest_ip":  resp_h,
-        "dest_port": resp_p,
         "proto":    proto,
     });
+
+    // Connection tuple: omit missing fields rather than fabricating
+    // `src_ip: ""` / `src_port: 0` — normalize()'s bridge fallback lifts
+    // whatever is present, and a fabricated port 0 would survive its
+    // numeric (non-truthy) gate while the empty IP is skipped.
+    if let Some(h) = v.get("id.orig_h").and_then(Value::as_str) {
+        out["src_ip"] = json!(h);
+    }
+    if let Some(p) = v.get("id.orig_p").and_then(Value::as_u64) {
+        out["src_port"] = json!(p);
+    }
+    if let Some(h) = v.get("id.resp_h").and_then(Value::as_str) {
+        out["dest_ip"] = json!(h);
+    }
+    if let Some(p) = v.get("id.resp_p").and_then(Value::as_u64) {
+        out["dest_port"] = json!(p);
+    }
 
     match log_type {
         "conn" => {
@@ -744,6 +753,25 @@ mod tests {
         assert_eq!(v["src_ip"], "10.0.0.1");
         assert_eq!(v["dest_port"], 443u64);
         assert_eq!(v["conn_state"], "SF");
+    }
+
+    #[test]
+    fn zeek_json_missing_tuple_omits_keys() {
+        // Logs without the conn 4-tuple (files, x509, weird) must not grow
+        // fabricated src_ip: ""/src_port: 0 — absent input keys stay absent.
+        let line = r#"{"ts":1748426400.0,"uid":"F1","fuid":"Fabc","total_bytes":512}"#;
+        let v = parse_zeek(line, "files");
+        assert_eq!(v["_vendor"], "zeek");
+        assert_eq!(v["log_type"], "files");
+        for k in ["src_ip", "src_port", "dest_ip", "dest_port"] {
+            assert!(v.get(k).is_none(), "{k} must be omitted when absent");
+        }
+        // partial tuple: only the present halves appear
+        let line = r#"{"ts":1748426400.0,"uid":"C2","id.orig_h":"10.0.0.1","id.orig_p":1234}"#;
+        let v = parse_zeek(line, "conn");
+        assert_eq!(v["src_ip"], "10.0.0.1");
+        assert_eq!(v["src_port"], 1234u64);
+        assert!(v.get("dest_ip").is_none() && v.get("dest_port").is_none());
     }
 
     #[test]
