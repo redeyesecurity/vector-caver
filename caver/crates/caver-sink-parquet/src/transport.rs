@@ -187,9 +187,12 @@ impl S3Transport {
                 std::thread::sleep(backoff);
             }
             // Never let a single attempt run past the remaining budget: the
-            // per-request timeout shrinks as the deadline approaches.
+            // per-request timeout shrinks as the deadline approaches. The
+            // FIRST attempt always runs — a tiny budget (or a slow-scheduled
+            // thread) must still try once instead of returning a
+            // zero-attempt failure (PR #21 review).
             let remaining = budget.saturating_sub(start.elapsed());
-            if remaining.is_zero() {
+            if attempt > 0 && remaining.is_zero() {
                 return Err(TransportError::PutFailed {
                     attempts: attempt,
                     last: format!(
@@ -218,7 +221,13 @@ impl S3Transport {
             let mut req = self
                 .agent
                 .put(&url)
-                .timeout(remaining.min(Duration::from_millis(self.cfg.timeout_ms)))
+                // Floor at 1ms: ureq rejects a zero-duration timeout, and
+                // attempt 0 may arrive with the budget already drained.
+                .timeout(
+                    remaining
+                        .min(Duration::from_millis(self.cfg.timeout_ms))
+                        .max(Duration::from_millis(1)),
+                )
                 .set("x-amz-date", &amz_date)
                 .set("x-amz-content-sha256", &payload_hash)
                 .set("Authorization", &auth);
@@ -287,8 +296,16 @@ impl S3Transport {
             &self.cfg.region,
             &self.creds,
         );
-        let mut req = self
-            .agent
+        // One-off agent with redirects disabled: the shared agent follows
+        // 3xx for HEAD (Authorization stripped on the hop), which would let
+        // a misconfigured endpoint that 302s to any 200 page read as
+        // false-healthy (PR #21 review). The probe runs once at boot, so a
+        // dedicated agent is cheap — and a 3xx surfaces honestly below.
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_millis(self.cfg.timeout_ms))
+            .redirects(0)
+            .build();
+        let mut req = agent
             .head(&url)
             .set("x-amz-date", &amz_date)
             .set("x-amz-content-sha256", &payload_hash)
@@ -448,9 +465,12 @@ mod tests {
         assert!(err.to_string().contains("elsewhere.example"), "{err}");
     }
 
-    /// put_deadline_ms bounds the whole retry loop: with a 1ms budget and a
-    /// 10s backoff base, the 503 must NOT be retried (we'd sleep past the
-    /// deadline) and the call must return promptly instead of after ~10s.
+    /// put_deadline_ms bounds the whole retry loop: with a 2s budget and a
+    /// 60s backoff base, the 503 must NOT be retried (the backoff would
+    /// sleep past the deadline) and the call must return promptly. The
+    /// budget is deliberately generous for one loopback round trip — a 1ms
+    /// budget races real I/O against the deadline and flakes on a loaded
+    /// box (PR #21 review reproduced 18/40 failures under load).
     #[test]
     fn put_deadline_abandons_retries_without_sleeping() {
         let _g = ENV_LOCK.lock().unwrap();
@@ -462,8 +482,8 @@ mod tests {
             .create();
 
         let cfg = S3Config {
-            retry_base_ms: 10_000,
-            put_deadline_ms: 1,
+            retry_base_ms: 60_000,
+            put_deadline_ms: 2_000,
             ..test_cfg(&server.url(), "T898_AK_DL", "T898_SK_DL")
         };
         let t = S3Transport::from_config(cfg).unwrap();
@@ -471,17 +491,50 @@ mod tests {
         let err = t.put("lake", "k", b"x").unwrap_err();
         m.assert();
         assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "must not sleep the 10s backoff"
+            start.elapsed() < Duration::from_secs(30),
+            "must not sleep the 60s backoff"
         );
         assert!(err.to_string().contains("after 1 attempt(s)"), "{err}");
         assert!(
-            err.to_string().contains("put_deadline_ms=1 exhausted"),
+            err.to_string().contains("put_deadline_ms=2000 exhausted"),
             "{err}"
         );
         assert!(
             err.to_string().contains("503"),
             "last error preserved: {err}"
+        );
+    }
+
+    /// A budget smaller than one round trip must still make the first
+    /// attempt (never a zero-attempt failure) — the per-request timeout is
+    /// floored at 1ms and the abandon checks only apply to retries.
+    #[test]
+    fn put_deadline_first_attempt_always_runs() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let mut server = mockito::Server::new();
+        // Passive mock (no expect/assert): under load the 1ms-floored
+        // request may time out before the server registers it — the product
+        // guarantee is proven by the attempt count in the error, which can
+        // only read "1" if attempt 0 actually executed.
+        let _m = server
+            .mock("PUT", mockito::Matcher::Any)
+            .with_status(503)
+            .create();
+
+        let cfg = S3Config {
+            retry_base_ms: 60_000,
+            put_deadline_ms: 1,
+            ..test_cfg(&server.url(), "T898_AK_A0", "T898_SK_A0")
+        };
+        let t = S3Transport::from_config(cfg).unwrap();
+        let err = t.put("lake", "k", b"x").unwrap_err();
+        // Whether attempt 0 surfaced as the 503 or as a timeout of the
+        // 1ms-floored request depends on scheduling — only the attempt
+        // count (never 0) and the deadline marker are deterministic.
+        assert!(err.to_string().contains("after 1 attempt(s)"), "{err}");
+        assert!(
+            err.to_string().contains("put_deadline_ms=1 exhausted"),
+            "{err}"
         );
     }
 
