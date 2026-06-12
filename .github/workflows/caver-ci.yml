@@ -57,36 +57,67 @@ jobs:
     runs-on: [self-hosted, macOS, X64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Depth 2 so the path filter below can diff against the parent.
+          fetch-depth: 2
       - name: Skip if sink not wired
         id: check
         run: |
           if ! grep -q 'sinks-caver_parquet' Cargo.toml; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Skip if nothing build-relevant changed
+        id: paths
+        if: steps.check.outputs.skip != 'true'
+        # The full vector build is the expensive job on this box; docs- or
+        # workflow-text-only changes don't need it (caver-collector#898
+        # item 7). Safe default: an empty or failed diff (merge edge cases,
+        # force pushes) runs the build.
+        run: |
+          changed=$(git diff --name-only HEAD^1 HEAD 2>/dev/null) || changed=""
+          if [ -n "$changed" ] && ! echo "$changed" | grep -qE '^(src/|lib/|caver/|proto/|build\.rs|Cargo\.(toml|lock)|\.github/workflows/caver-ci\.yml)'; then
+            echo "No build-relevant paths changed; skipping the vector build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
       - uses: Swatinem/rust-cache@v2
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         with:
           key: vector-component
-      - name: Install protoc
-        if: steps.check.outputs.skip != 'true'
-        run: command -v protoc >/dev/null 2>&1 || brew install protobuf
+      - name: Install protoc (pinned)
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
+        # Pinned release zip instead of `brew install protobuf` so a brew
+        # formula bump can't change codegen under us, and the runner doesn't
+        # need brew write access (caver-collector#898 item 7). A protoc
+        # already on the box (any source) short-circuits.
+        run: |
+          if command -v protoc >/dev/null 2>&1; then
+            protoc --version
+            exit 0
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-osx-x86_64.zip"
+          mkdir -p "$RUNNER_TEMP/protoc"
+          unzip -oq "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/protoc/bin/protoc" --version
       - name: Build minimal vector with caver_parquet
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # --locked: a stale committed Cargo.lock must fail here, not get
         # silently rewritten on the runner.
         run: cargo build --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
       - name: caver_parquet registered in `vector list`
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         run: ./target/debug/vector list | grep -w caver_parquet
       - name: Config naming caver_parquet validates
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # Full validate (no --no-environment) so SinkConfig::build actually
         # runs: env-var + sensor_id + endpoint checks are exercised. build()
-        # does no I/O and the healthcheck is a no-op, so no store is needed.
-        # RUNNER_TEMP keeps the 9 runners sharing this box out of each
-        # other's way.
+        # does no I/O, and the real healthcheck (signed HEAD on the bucket,
+        # caver-collector#898) is disabled because the endpoint here is
+        # intentionally unreachable. RUNNER_TEMP keeps the 9 runners sharing
+        # this box out of each other's way.
         run: |
           mkdir -p "$RUNNER_TEMP/caver-ci-data"
           cat > "$RUNNER_TEMP/caver-component-ci.toml" <<EOF
@@ -103,10 +134,11 @@ jobs:
           endpoint = "http://127.0.0.1:1"
           access_key_env = "CAVER_CI_AK"
           secret_key_env = "CAVER_CI_SK"
+          healthcheck.enabled = false
           EOF
           CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate "$RUNNER_TEMP/caver-component-ci.toml"
       - name: Wrapper sink unit tests
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # The caver-crates job covers only the caver workspace; the wrapper
         # (src/sinks/caver_parquet) lives in the root vector workspace and was
         # otherwise never tested in CI (caver-collector#899 item 4). Reuses

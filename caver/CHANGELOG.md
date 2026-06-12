@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.13.0] - 2026-06-12
+
+### Added
+- **Real sink healthcheck** (caver-collector#898): the `caver_parquet`
+  healthcheck now issues a signed `HEAD` on the bucket
+  (`S3Transport::head_bucket`, run on the blocking pool) instead of
+  `future::ok(())` — boot and `vector validate` catch wrong credentials
+  (403 hint), missing buckets (404 hint), and wrong-region redirects
+  before events flow
+- **`put_deadline_ms`** (default 45000): total wall-clock budget for one
+  PUT *including* every retry and backoff sleep. Bounds the final
+  shutdown flush — with the retry defaults the unbounded worst case was
+  ~121s, longer than vector's `graceful_shutdown_limit_secs` default of
+  60s, so an already-acknowledged final batch could be force-killed
+  mid-retry and lost without reaching the DLQ. The per-request timeout
+  shrinks to the remaining budget; exhaustion routes the batch to the DLQ
+  with `put_deadline_ms=<n> exhausted` appended to the error
+- **DLQ reason sidecar**: each `dlq-*.ndjson` now gets a same-stem
+  `.reason` file recording why the batch landed there (`put: …` /
+  `serialize: …`), so triage doesn't have to correlate timestamps with
+  collector logs; the ndjson stays pure rows for replay tooling
+
+### Fixed
+- **Native-layout partition values are key-charset sanitized**
+  (carried from the vector-caver#20 review): `sensor_id` is sanitized in
+  `ParquetSink::new` (fallback `collector`) and the event-derived
+  `class_uid` in the Native key path falls back to `0000` when key-unsafe
+  — a `/` or `..` there broke the SigV4 canonical path and 403'd (→ DLQ)
+  the whole batch
+
+### Changed
+- arrow/parquet 55 → 56, sharing the root vector workspace's copy
+  (codecs are already on 56) instead of dragging a second full arrow
+  stack into the build
+- CI: protoc is now a pinned 25.3 release download instead of
+  `brew install protobuf`; the expensive vector-component job is
+  path-filtered (docs-only changes skip it, safe default = run); the
+  validate config sets `healthcheck.enabled = false` because its
+  endpoint is intentionally unreachable
+
 ## [0.12.0] - 2026-06-12
 
 ### Fixed
