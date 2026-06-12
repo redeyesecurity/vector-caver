@@ -175,6 +175,13 @@ impl ParquetSink {
         } else {
             "uf/ocsf".into()
         };
+        // Native layout embeds sensor_id raw in the partition key
+        // (`sensor=<sensor_id>`); same sanitize-with-fallback as the staging
+        // source chain above (caver-collector#898 item 4, carried from the
+        // PR #20 review).
+        if !key_safe(&cfg.sensor_id) {
+            cfg.sensor_id = "collector".into();
+        }
         Self {
             cfg,
             source_name,
@@ -238,9 +245,14 @@ impl ParquetSink {
                 (key, encoded, rows)
             }
             Layout::Native => {
+                // class_uid is event-derived: a `/` or `..` here would break
+                // the SigV4 canonical path and 403 (→ DLQ) the whole batch,
+                // so key-unsafe values fall back like missing ones
+                // (caver-collector#898 item 4).
                 let class_uid = batch[0]
                     .get(&self.cfg.class_uid_field)
                     .map(|s| s.as_str())
+                    .filter(|s| key_safe(s))
                     .unwrap_or(DEFAULT_CLASS_UID);
                 let key = build_key(class_uid, &self.cfg.sensor_id, now);
                 let encoded = rows_to_parquet(&batch);
@@ -291,6 +303,12 @@ impl ParquetSink {
     /// `_time`, injected `index`/`class_uid` defaults), while `Native` rows
     /// are the raw accepted maps. Matches the Python sink; anything replaying
     /// a DLQ must handle both shapes (caver-collector#899 item 5).
+    ///
+    /// Alongside each `dlq-*.ndjson` a same-stem `.reason` sidecar records
+    /// why the batch landed here (`put: …` / `serialize: …`) so triage
+    /// doesn't have to correlate timestamps with collector logs
+    /// (caver-collector#898 item 5). Kept out of the ndjson itself so replay
+    /// tooling streams pure rows.
     fn to_dlq(&self, rows: &[HashMap<String, String>], reason: &str) {
         let Some(dlq) = &self.cfg.dlq_path else {
             return;
@@ -307,7 +325,7 @@ impl ParquetSink {
                 }
             }
         }
-        let _ = reason;
+        let _ = std::fs::write(dlq.join(format!("dlq-{stamp}-{id}.reason")), reason);
     }
 }
 
@@ -559,10 +577,79 @@ mod tests {
         let dlq_files: Vec<_> = std::fs::read_dir(&dlq)
             .expect("dlq dir created")
             .filter_map(|e| e.ok())
+            .map(|e| e.path())
             .collect();
-        assert_eq!(dlq_files.len(), 1, "one DLQ file for the failed batch");
-        let body = std::fs::read_to_string(dlq_files[0].path()).unwrap();
+        assert_eq!(
+            dlq_files.len(),
+            2,
+            "ndjson + reason sidecar for the failed batch"
+        );
+        let ndjson = dlq_files
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e == "ndjson"))
+            .expect("ndjson file present");
+        let body = std::fs::read_to_string(ndjson).unwrap();
         assert_eq!(body.lines().count(), 2, "both events preserved as ndjson");
+        let reason_path = dlq_files
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e == "reason"))
+            .expect("reason sidecar present");
+        assert_eq!(
+            reason_path.file_stem(),
+            ndjson.file_stem(),
+            "sidecar shares the ndjson stem"
+        );
+        let reason = std::fs::read_to_string(reason_path).unwrap();
+        assert!(
+            reason.starts_with("put: ") && reason.contains("connection refused"),
+            "reason records why: {reason}"
+        );
         std::fs::remove_dir_all(&dlq).ok();
+    }
+
+    #[test]
+    fn native_layout_sanitizes_partition_values() {
+        let captured: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let cap2 = captured.clone();
+        let put: PutFn = Arc::new(move |_b, key: &str, _body| {
+            cap2.lock().unwrap().push(key.into());
+            Ok(())
+        });
+
+        // Key-unsafe sensor_id falls back in new(); event-derived class_uid
+        // with a slash falls back to DEFAULT_CLASS_UID in flush().
+        let cfg = Config {
+            batch_size: 1,
+            layout: Layout::Native,
+            sensor_id: "Matt\u{2019}s-box".into(),
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, Some(put.clone()));
+        assert_eq!(sink.cfg.sensor_id, "collector", "unsafe sensor_id replaced");
+        sink.send(HashMap::from([("class_uid".into(), "../2003/evil".into())]));
+
+        // Safe values pass through untouched.
+        let cfg = Config {
+            batch_size: 1,
+            layout: Layout::Native,
+            sensor_id: "edge-01".into(),
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, Some(put));
+        assert_eq!(sink.cfg.sensor_id, "edge-01");
+        sink.send(HashMap::from([("class_uid".into(), "2003".into())]));
+
+        let keys = captured.lock().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(
+            keys[0].starts_with("0000/") && keys[0].contains("/sensor=collector/"),
+            "unsafe values sanitized: {}",
+            keys[0]
+        );
+        assert!(
+            keys[1].starts_with("2003/") && keys[1].contains("/sensor=edge-01/"),
+            "safe values kept: {}",
+            keys[1]
+        );
     }
 }

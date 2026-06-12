@@ -23,6 +23,8 @@ pub enum TransportError {
     BadEndpoint(String),
     #[error("s3 put failed after {attempts} attempt(s): {last}")]
     PutFailed { attempts: u32, last: String },
+    #[error("healthcheck: {0}")]
+    HealthcheckFailed(String),
 }
 
 pub struct S3Config {
@@ -43,6 +45,14 @@ pub struct S3Config {
     /// [`MAX_BACKOFF_MS`].
     pub retry_base_ms: u64,
     pub timeout_ms: u64,
+    /// Total wall-clock budget for one PUT *including* every retry and
+    /// backoff sleep, in milliseconds. With the other defaults the unbounded
+    /// worst case was ~121s (4 × 30s timeouts + backoff) — longer than
+    /// vector's `graceful_shutdown_limit_secs` default of 60s, so a shutdown
+    /// flush of an already-acknowledged final batch could be force-killed
+    /// mid-retry and lost without reaching the DLQ (caver-collector#898).
+    /// Keep this below the shutdown grace.
+    pub put_deadline_ms: u64,
 }
 
 impl Default for S3Config {
@@ -56,6 +66,7 @@ impl Default for S3Config {
             max_retries: 3,
             retry_base_ms: 200,
             timeout_ms: 30_000,
+            put_deadline_ms: 45_000,
         }
     }
 }
@@ -148,16 +159,44 @@ impl S3Transport {
         let payload_hash = sha256_hex(body);
 
         let attempts = self.cfg.max_retries.saturating_add(1);
+        let budget = Duration::from_millis(self.cfg.put_deadline_ms);
+        let start = std::time::Instant::now();
         let mut last = String::new();
         for attempt in 0..attempts {
             if attempt > 0 {
                 let factor = 1u64.checked_shl(attempt - 1).unwrap_or(u64::MAX);
-                let backoff = self
-                    .cfg
-                    .retry_base_ms
-                    .saturating_mul(factor)
-                    .min(MAX_BACKOFF_MS);
-                std::thread::sleep(Duration::from_millis(backoff));
+                let backoff = Duration::from_millis(
+                    self.cfg
+                        .retry_base_ms
+                        .saturating_mul(factor)
+                        .min(MAX_BACKOFF_MS),
+                );
+                // A retry that would sleep into (or past) the deadline is
+                // abandoned NOW, so the batch reaches the DLQ while the
+                // process is still alive — not after vector's shutdown grace
+                // force-kills the flush thread (caver-collector#898).
+                if start.elapsed().saturating_add(backoff) >= budget {
+                    return Err(TransportError::PutFailed {
+                        attempts: attempt,
+                        last: format!(
+                            "{last}; put_deadline_ms={} exhausted",
+                            self.cfg.put_deadline_ms
+                        ),
+                    });
+                }
+                std::thread::sleep(backoff);
+            }
+            // Never let a single attempt run past the remaining budget: the
+            // per-request timeout shrinks as the deadline approaches.
+            let remaining = budget.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                return Err(TransportError::PutFailed {
+                    attempts: attempt,
+                    last: format!(
+                        "{last}; put_deadline_ms={} exhausted",
+                        self.cfg.put_deadline_ms
+                    ),
+                });
             }
             let now = Utc::now();
             let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -179,6 +218,7 @@ impl S3Transport {
             let mut req = self
                 .agent
                 .put(&url)
+                .timeout(remaining.min(Duration::from_millis(self.cfg.timeout_ms)))
                 .set("x-amz-date", &amz_date)
                 .set("x-amz-content-sha256", &payload_hash)
                 .set("Authorization", &auth);
@@ -219,6 +259,65 @@ impl S3Transport {
             }
         }
         Err(TransportError::PutFailed { attempts, last })
+    }
+
+    /// Signed `HeadBucket` probe: verifies endpoint reachability, credential
+    /// validity, and bucket existence/permission without writing an object.
+    /// Single attempt, no retries — callers use it as a boot-time healthcheck
+    /// and should get an answer fast (caver-collector#898). The previous
+    /// healthcheck was a no-op, so a bad endpoint/bucket/secret only surfaced
+    /// on the first flush, as a DLQ'd batch.
+    pub fn head_bucket(&self, bucket: &str) -> Result<(), TransportError> {
+        let path = format!("/{}", uri_encode(bucket, true));
+        let url = format!("{}{}", self.base, path);
+        let payload_hash = sha256_hex(b"");
+        let now = Utc::now();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let mut extra: Vec<(&str, &str)> = Vec::new();
+        if let Some(tok) = &self.creds.session_token {
+            extra.push(("x-amz-security-token", tok));
+        }
+        let auth = sign_request(
+            "HEAD",
+            &self.host,
+            &path,
+            &extra,
+            &payload_hash,
+            &now,
+            &self.cfg.region,
+            &self.creds,
+        );
+        let mut req = self
+            .agent
+            .head(&url)
+            .set("x-amz-date", &amz_date)
+            .set("x-amz-content-sha256", &payload_hash)
+            .set("Authorization", &auth);
+        if let Some(tok) = &self.creds.session_token {
+            req = req.set("x-amz-security-token", tok);
+        }
+        match req.call() {
+            Ok(resp) if (200..300).contains(&resp.status()) => Ok(()),
+            // 301: wrong region for path-style; 307: bucket DNS still
+            // propagating. Either way the lake is not writable from here.
+            Ok(resp) => Err(TransportError::HealthcheckFailed(format!(
+                "HEAD bucket {bucket:?}: HTTP {} (redirect, not followed)",
+                resp.status()
+            ))),
+            Err(ureq::Error::Status(code, _)) => {
+                let hint = match code {
+                    403 => " (credentials lack access to the bucket)",
+                    404 => " (bucket does not exist)",
+                    _ => "",
+                };
+                Err(TransportError::HealthcheckFailed(format!(
+                    "HEAD bucket {bucket:?}: HTTP {code}{hint}"
+                )))
+            }
+            Err(e) => Err(TransportError::HealthcheckFailed(format!(
+                "HEAD bucket {bucket:?}: transport: {e}"
+            ))),
+        }
     }
 }
 
@@ -347,6 +446,74 @@ mod tests {
         assert!(err.to_string().contains("after 3 attempt(s)"), "{err}");
         assert!(err.to_string().contains("HTTP 307"), "{err}");
         assert!(err.to_string().contains("elsewhere.example"), "{err}");
+    }
+
+    /// put_deadline_ms bounds the whole retry loop: with a 1ms budget and a
+    /// 10s backoff base, the 503 must NOT be retried (we'd sleep past the
+    /// deadline) and the call must return promptly instead of after ~10s.
+    #[test]
+    fn put_deadline_abandons_retries_without_sleeping() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let mut server = mockito::Server::new();
+        let m = server
+            .mock("PUT", mockito::Matcher::Any)
+            .with_status(503)
+            .expect(1)
+            .create();
+
+        let cfg = S3Config {
+            retry_base_ms: 10_000,
+            put_deadline_ms: 1,
+            ..test_cfg(&server.url(), "T898_AK_DL", "T898_SK_DL")
+        };
+        let t = S3Transport::from_config(cfg).unwrap();
+        let start = std::time::Instant::now();
+        let err = t.put("lake", "k", b"x").unwrap_err();
+        m.assert();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "must not sleep the 10s backoff"
+        );
+        assert!(err.to_string().contains("after 1 attempt(s)"), "{err}");
+        assert!(
+            err.to_string().contains("put_deadline_ms=1 exhausted"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("503"),
+            "last error preserved: {err}"
+        );
+    }
+
+    #[test]
+    fn head_bucket_healthcheck() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let mut server = mockito::Server::new();
+        // Signed like a real request: same credential/signature shape as PUT.
+        let ok = server
+            .mock("HEAD", "/lake")
+            .match_header(
+                "authorization",
+                mockito::Matcher::Regex("^AWS4-HMAC-SHA256 Credential=testak/".into()),
+            )
+            .with_status(200)
+            .create();
+        let t =
+            S3Transport::from_config(test_cfg(&server.url(), "T898_AK_HC", "T898_SK_HC")).unwrap();
+        t.head_bucket("lake").unwrap();
+        ok.assert();
+
+        let denied = server.mock("HEAD", "/secret").with_status(403).create();
+        let err = t.head_bucket("secret").unwrap_err();
+        denied.assert();
+        assert!(matches!(err, TransportError::HealthcheckFailed(_)));
+        assert!(err.to_string().contains("403"), "{err}");
+        assert!(err.to_string().contains("lack access"), "{err}");
+
+        let missing = server.mock("HEAD", "/nope").with_status(404).create();
+        let err = t.head_bucket("nope").unwrap_err();
+        missing.assert();
+        assert!(err.to_string().contains("does not exist"), "{err}");
     }
 
     #[test]

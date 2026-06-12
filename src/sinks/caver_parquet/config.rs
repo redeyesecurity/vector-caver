@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use futures::{FutureExt, future};
+use futures::FutureExt;
 use vector_lib::configurable::configurable_component;
 
 use crate::{
@@ -63,6 +63,10 @@ const fn default_retry_base_ms() -> u64 {
 
 const fn default_timeout_ms() -> u64 {
     30_000
+}
+
+const fn default_put_deadline_ms() -> u64 {
+    45_000
 }
 
 /// Charset safe to embed raw in an object key (and the SigV4 canonical path):
@@ -189,6 +193,17 @@ pub struct CaverParquetConfig {
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
 
+    /// Total wall-clock budget for one PUT *including* every retry and
+    /// backoff sleep, in milliseconds.
+    ///
+    /// This bounds the final shutdown flush: with the retry defaults the
+    /// unbounded worst case was ~121s — longer than
+    /// `graceful_shutdown_limit_secs` (default 60) — so the last,
+    /// already-acknowledged batch could be force-killed mid-retry and lost
+    /// without reaching the DLQ. Keep this below the shutdown grace.
+    #[serde(default = "default_put_deadline_ms")]
+    pub put_deadline_ms: u64,
+
     #[configurable(derived)]
     #[serde(
         default,
@@ -218,6 +233,7 @@ impl Default for CaverParquetConfig {
             max_retries: default_max_retries(),
             retry_base_ms: default_retry_base_ms(),
             timeout_ms: default_timeout_ms(),
+            put_deadline_ms: default_put_deadline_ms(),
             acknowledgements: AcknowledgementsConfig::default(),
         }
     }
@@ -229,6 +245,11 @@ impl SinkConfig for CaverParquetConfig {
     async fn build(&self, _cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
         if self.batch_size == 0 {
             return Err("`batch_size` must be at least 1".into());
+        }
+        if self.put_deadline_ms == 0 {
+            return Err("`put_deadline_ms` must be at least 1 (it is the total \
+                 wall-clock budget for a PUT including retries)"
+                .into());
         }
         if let Some(sensor_id) = &self.sensor_id
             && !is_key_safe(sensor_id)
@@ -287,10 +308,21 @@ impl SinkConfig for CaverParquetConfig {
             max_retries: self.max_retries,
             retry_base_ms: self.retry_base_ms,
             timeout_ms: self.timeout_ms,
+            put_deadline_ms: self.put_deadline_ms,
         };
         // Fails fast on missing credential env vars or a bad endpoint, so a
         // misconfigured sink refuses to boot instead of dropping data later.
-        let put_fn = caver_sink_parquet::s3_put_fn(s3_cfg).map_err(|e| e.to_string())?;
+        // One transport shared by the PUT path and the healthcheck probe.
+        let transport = Arc::new(
+            caver_sink_parquet::S3Transport::from_config(s3_cfg).map_err(|e| e.to_string())?,
+        );
+        let put_transport = Arc::clone(&transport);
+        let put_fn: caver_sink_parquet::PutFn =
+            Arc::new(move |bucket: &str, key: &str, body: Vec<u8>| {
+                put_transport
+                    .put(bucket, key, &body)
+                    .map_err(|e| e.to_string())
+            });
 
         let layout = match self.layout {
             LayoutConfig::CaverStaging => caver_sink_parquet::Layout::CaverStaging,
@@ -317,7 +349,21 @@ impl SinkConfig for CaverParquetConfig {
             self.dlq_path.is_some(),
             self.layout == LayoutConfig::CaverStaging,
         );
-        let healthcheck = future::ok(()).boxed();
+        // Signed HEAD on the bucket so boot / `vector validate` (with
+        // healthchecks enabled) catches wrong credentials, bucket, or region
+        // before events flow. The transport is sync (ureq), so probe on the
+        // blocking pool.
+        let hc_bucket = self.bucket.clone();
+        let healthcheck = async move {
+            tokio::task::spawn_blocking(move || {
+                transport
+                    .head_bucket(&hc_bucket)
+                    .map_err(|e| -> crate::Error { e.to_string().into() })
+            })
+            .await
+            .map_err(|e| -> crate::Error { e.to_string().into() })?
+        }
+        .boxed();
 
         Ok((VectorSink::Stream(Box::new(sink)), healthcheck))
     }

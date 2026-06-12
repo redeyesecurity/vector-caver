@@ -12,8 +12,11 @@ license = "MPL-2.0"
 name = "caver_sink_parquet"
 
 [dependencies]
-arrow = { version = "55", features = ["ipc"] }
-parquet = { version = "55", features = ["snap", "zstd"] }
+# 56 to share vector's arrow/parquet copy (codecs are on 56) instead of
+# dragging a second full arrow stack into the root build (caver-collector#898
+# item 6).
+arrow = { version = "56", features = ["ipc"] }
+parquet = { version = "56", features = ["snap", "zstd"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["clock"] }
 uuid = { version = "1", features = ["v4"] }
