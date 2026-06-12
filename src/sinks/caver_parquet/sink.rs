@@ -155,6 +155,12 @@ impl StreamSink<EventArray> for CaverParquetSink {
     async fn run(self: Box<Self>, mut input: BoxStream<'_, EventArray>) -> Result<(), ()> {
         let events_sent = register!(EventsSent::from(Output(None)));
 
+        // Timer-flush thread: applies the `flush_max_age_seconds` freshness
+        // backstop so a below-`batch_size` buffer from a low-rate source
+        // ships without waiting for shutdown (caver-collector#901). Its
+        // flushes are crate-internal std-thread work — no tokio involvement.
+        self.parquet.start_flusher();
+
         while let Some(mut events) = input.next().await {
             let finalizers = events.take_finalizers();
             let byte_size = events.estimated_json_encoded_size_of();
@@ -232,6 +238,9 @@ impl StreamSink<EventArray> for CaverParquetSink {
         let parquet = Arc::clone(&self.parquet);
         match tokio::task::spawn_blocking(move || {
             let before = failure_counters(&parquet);
+            // Join the timer thread first (it does not drain — the shutdown
+            // drain below always ships regardless of buffer age or size).
+            parquet.stop_flusher();
             parquet.flush();
             let after = failure_counters(&parquet);
             (

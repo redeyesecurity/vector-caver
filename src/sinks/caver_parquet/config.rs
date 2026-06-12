@@ -61,6 +61,14 @@ const fn default_retry_base_ms() -> u64 {
     200
 }
 
+const fn default_flush_seconds() -> u64 {
+    30
+}
+
+const fn default_flush_max_age_seconds() -> u64 {
+    300
+}
+
 const fn default_timeout_ms() -> u64 {
     30_000
 }
@@ -140,6 +148,32 @@ pub struct CaverParquetConfig {
     #[serde(default = "default_batch_size")]
     #[configurable(metadata(docs::examples = 500))]
     pub batch_size: usize,
+
+    /// Timer-flush tick interval, in seconds.
+    ///
+    /// A background timer wakes this often to apply the
+    /// `flush_max_age_seconds` freshness backstop. Matches the Python
+    /// collector sink's `flush_seconds`.
+    #[serde(default = "default_flush_seconds")]
+    pub flush_seconds: u64,
+
+    /// Freshness backstop for a below-`batch_size` buffer, in seconds.
+    ///
+    /// The sink writes a Parquet object when `batch_size` events have
+    /// buffered; a low-rate source can take a long time to get there. A timer
+    /// tick drains a below-`batch_size` buffer anyway once its oldest event
+    /// has waited this long, so trickle sources keep shipping. `0` = drain on
+    /// every tick (worst-case latency ≈ `flush_seconds`, at the cost of tiny
+    /// Parquet objects from low-rate sources).
+    ///
+    /// Trade-off (same numbers as the Python collector sink,
+    /// caver-collector#888): worst-case event latency and the crash-loss
+    /// window for a below-`batch_size` buffer are ≈ this value plus up to one
+    /// `flush_seconds` tick. Lower it (e.g. `15`) for freshness-sensitive
+    /// deployments; keep the default where lake efficiency (fewer, larger
+    /// objects) matters more.
+    #[serde(default = "default_flush_max_age_seconds")]
+    pub flush_max_age_seconds: u64,
 
     /// Local directory receiving failed batches as ndjson (dead-letter queue).
     ///
@@ -224,6 +258,8 @@ impl Default for CaverParquetConfig {
             writer_name: default_writer_name(),
             staging_prefix: default_staging_prefix(),
             batch_size: default_batch_size(),
+            flush_seconds: default_flush_seconds(),
+            flush_max_age_seconds: default_flush_max_age_seconds(),
             dlq_path: None,
             endpoint: None,
             region: default_region(),
@@ -245,6 +281,13 @@ impl SinkConfig for CaverParquetConfig {
     async fn build(&self, _cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
         if self.batch_size == 0 {
             return Err("`batch_size` must be at least 1".into());
+        }
+        if self.flush_seconds == 0 {
+            return Err(
+                "`flush_seconds` must be at least 1 (it is the timer-flush tick \
+                 that applies the `flush_max_age_seconds` freshness backstop)"
+                    .into(),
+            );
         }
         if self.put_deadline_ms == 0 {
             return Err("`put_deadline_ms` must be at least 1 (it is the total \
@@ -332,6 +375,8 @@ impl SinkConfig for CaverParquetConfig {
             bucket: self.bucket.clone(),
             class_uid_field: self.class_uid_field.clone(),
             batch_size: self.batch_size,
+            flush_seconds: self.flush_seconds,
+            flush_max_age_seconds: self.flush_max_age_seconds,
             dlq_path: self.dlq_path.clone(),
             layout,
             source: self.source.clone(),
