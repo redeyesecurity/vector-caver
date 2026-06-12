@@ -8,5 +8,5 @@ pub mod sink;
 pub mod transport;
 pub mod writer;
 
-pub use sink::{Config, ParquetSink, PutFn};
+pub use sink::{Config, Layout, ParquetSink, PutFn};
 pub use transport::{s3_put_fn, S3Config, S3Transport, TransportError};
