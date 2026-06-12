@@ -48,3 +48,50 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         working-directory: caver
         run: cargo test --workspace
+
+  # Proves the caver crates stay loadable as real Vector components
+  # (caver-collector#894): builds the root vector binary with only the
+  # caver_parquet sink enabled and asserts component registration.
+  vector-component:
+    name: vector component registration
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if sink not wired
+        id: check
+        run: |
+          if ! grep -q 'sinks-caver_parquet' Cargo.toml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.skip != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.skip != 'true'
+        with:
+          key: vector-component
+      - name: Install protoc
+        if: steps.check.outputs.skip != 'true'
+        run: command -v protoc >/dev/null 2>&1 || brew install protobuf
+      - name: Build minimal vector with caver_parquet
+        if: steps.check.outputs.skip != 'true'
+        run: cargo build --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
+      - name: caver_parquet registered in `vector list`
+        if: steps.check.outputs.skip != 'true'
+        run: ./target/debug/vector list | grep -w caver_parquet
+      - name: Config naming caver_parquet validates
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          cat > /tmp/caver-component-ci.toml <<'EOF'
+          [sources.demo]
+          type = "demo_logs"
+          format = "syslog"
+
+          [sinks.lake]
+          type = "caver_parquet"
+          inputs = ["demo"]
+          bucket = "ci-validate"
+          endpoint = "http://127.0.0.1:1"
+          access_key_env = "CAVER_CI_AK"
+          secret_key_env = "CAVER_CI_SK"
+          EOF
+          CAVER_CI_AK=ci CAVER_CI_SK=ci ./target/debug/vector validate --no-environment /tmp/caver-component-ci.toml

@@ -1,9 +1,12 @@
 [package]
 name = "caver-sink-parquet"
 description = "OCSF-partitioned Parquet sink to S3/MinIO for the caver lake"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+# Explicit (not workspace-inherited): this crate is also a path dependency of the
+# root vector workspace (sinks-caver_parquet), and cargo resolves inheritance
+# against root there. Keep version in lockstep with caver/Cargo.toml workspace.package.
+version = "0.8.0"
+edition = "2021"
+license = "MPL-2.0"
 
 [lib]
 name = "caver_sink_parquet"

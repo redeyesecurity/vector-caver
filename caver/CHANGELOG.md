@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0] - 2026-06-12
+
+### Added
+- **`caver_parquet` is a registered Vector sink** (caver-collector#894): the root
+  vector binary now wires `caver-sink-parquet` in as a first-class component
+  behind the `sinks-caver_parquet` feature (in the `sinks-logs` umbrella)
+  - `src/sinks/caver_parquet/` — `SinkConfig` impl mapping Vector config to the
+    crate's `Config` + `S3Config` (bucket, sensor_id, class_uid_field, batch_size,
+    dlq_path, endpoint, region, credential env-var names, retry/timeout knobs)
+  - Build fails fast on missing credential env vars or a bad endpoint
+  - All inner-sink interaction (batching, Parquet encode, signed PUT with retry
+    backoff) runs under `spawn_blocking` — a slow object store cannot stall the
+    async topology
+  - Logs are flattened to dotted-key string rows via `all_event_fields`
+  - `vector list` shows `caver_parquet`; a config naming it boots
+
+### Changed
+- `caver-sink-parquet` no longer uses workspace-inherited `version`/`edition`/
+  `license` (explicit, kept in lockstep with `workspace.package`): the crate is
+  now also a path dependency of the root vector workspace, and cargo resolves
+  inheritance against root there. Root `[workspace]` excludes `caver/`.
+
 ## [0.7.0] - 2026-06-12
 
 ### Added

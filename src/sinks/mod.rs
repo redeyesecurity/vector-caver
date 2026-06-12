@@ -34,6 +34,8 @@ pub mod azure_logs_ingestion;
 pub mod azure_monitor_logs;
 #[cfg(feature = "sinks-blackhole")]
 pub mod blackhole;
+#[cfg(feature = "sinks-caver_parquet")]
+pub mod caver_parquet;
 #[cfg(feature = "sinks-clickhouse")]
 pub mod clickhouse;
 #[cfg(feature = "sinks-console")]
