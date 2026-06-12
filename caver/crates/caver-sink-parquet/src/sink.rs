@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub type PutFn = Arc<dyn Fn(&str, &str, Vec<u8>) + Send + Sync>;
+/// Object-store writer: `(bucket, key, body)` → `Err(reason)` sends the
+/// batch to the DLQ. Build one with [`crate::transport::s3_put_fn`] or
+/// inject your own (tests).
+pub type PutFn = Arc<dyn Fn(&str, &str, Vec<u8>) -> Result<(), String> + Send + Sync>;
 
 pub struct Config {
     pub bucket: String,
@@ -49,6 +52,7 @@ struct Inner {
     accepted: u64,
     dropped: u64,
     flushes: u64,
+    put_errors: u64,
 }
 
 /// OCSF-partitioned Parquet sink. Mirrors the Python `CaverParquetSink`.
@@ -70,6 +74,7 @@ impl ParquetSink {
                 accepted: 0,
                 dropped: 0,
                 flushes: 0,
+                put_errors: 0,
             }),
         }
     }
@@ -108,9 +113,19 @@ impl ParquetSink {
         match rows_to_parquet(&batch) {
             Ok(bytes) => {
                 if let Some(ref put) = self.put_fn {
-                    put(&self.cfg.bucket, &key, bytes);
-                    let mut g = self.inner.lock().unwrap();
-                    g.flushes += 1;
+                    match put(&self.cfg.bucket, &key, bytes) {
+                        Ok(()) => {
+                            let mut g = self.inner.lock().unwrap();
+                            g.flushes += 1;
+                        }
+                        Err(e) => {
+                            let mut g = self.inner.lock().unwrap();
+                            g.dropped += batch.len() as u64;
+                            g.put_errors += 1;
+                            drop(g);
+                            self.to_dlq(&batch, &format!("put: {e}"));
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -128,6 +143,7 @@ impl ParquetSink {
             ("accepted".into(), g.accepted),
             ("dropped".into(), g.dropped),
             ("flushes".into(), g.flushes),
+            ("put_errors".into(), g.put_errors),
             ("buf_size".into(), g.buf.len() as u64),
         ])
     }
@@ -164,6 +180,7 @@ mod tests {
         let cap2 = captured.clone();
         let put: PutFn = Arc::new(move |bucket: &str, key: &str, body: Vec<u8>| {
             cap2.lock().unwrap().push((bucket.into(), key.into(), body));
+            Ok(())
         });
 
         let cfg = Config {
@@ -196,6 +213,7 @@ mod tests {
         let cap2 = captured.clone();
         let put: PutFn = Arc::new(move |_b, _k, body| {
             cap2.lock().unwrap().push(body);
+            Ok(())
         });
 
         let cfg = Config {
@@ -209,5 +227,36 @@ mod tests {
         sink.flush();
         let puts = captured.lock().unwrap().len();
         assert_eq!(puts, 1);
+    }
+
+    #[test]
+    fn put_failure_counts_and_dlqs() {
+        let dlq =
+            std::env::temp_dir().join(format!("caver-sink-dlq-{}", uuid::Uuid::new_v4().simple()));
+        let put: PutFn = Arc::new(|_b, _k, _body| Err("connection refused".into()));
+
+        let cfg = Config {
+            batch_size: 2,
+            dlq_path: Some(dlq.clone()),
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, Some(put));
+        sink.send(HashMap::from([("class_uid".into(), "2003".into())]));
+        sink.send(HashMap::from([("class_uid".into(), "2003".into())]));
+
+        let stats = sink.stats();
+        assert_eq!(stats["accepted"], 2);
+        assert_eq!(stats["dropped"], 2, "failed batch counted dropped");
+        assert_eq!(stats["put_errors"], 1);
+        assert_eq!(stats["flushes"], 0, "failed put is not a flush");
+
+        let dlq_files: Vec<_> = std::fs::read_dir(&dlq)
+            .expect("dlq dir created")
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(dlq_files.len(), 1, "one DLQ file for the failed batch");
+        let body = std::fs::read_to_string(dlq_files[0].path()).unwrap();
+        assert_eq!(body.lines().count(), 2, "both events preserved as ndjson");
+        std::fs::remove_dir_all(&dlq).ok();
     }
 }
