@@ -1,0 +1,17 @@
+{
+  "_vendor": "zeek",
+  "_path": "conn",
+  "ts": 1779962400.123,
+  "uid": "CmES5u32sYpV7JYN",
+  "id.orig_h": "10.0.0.15",
+  "id.orig_p": 52488,
+  "id.resp_h": "93.184.216.34",
+  "id.resp_p": 443,
+  "proto": "tcp",
+  "service": "ssl",
+  "duration": 12.45,
+  "orig_bytes": 4321,
+  "resp_bytes": 87654,
+  "conn_state": "SF",
+  "missed_bytes": 0
+}

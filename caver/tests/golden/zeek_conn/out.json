@@ -1,0 +1,15 @@
+{
+  "zk_log": "conn",
+  "class_uid": 4001,
+  "severity_id": 1,
+  "zk_uid": "CmES5u32sYpV7JYN",
+  "network_protocol": "tcp",
+  "network_service": "ssl",
+  "src_ip": "10.0.0.15",
+  "dst_ip": "93.184.216.34",
+  "src_port": 52488,
+  "dst_port": 443,
+  "zk_duration": 12.45,
+  "zk_orig_bytes": 4321,
+  "zk_resp_bytes": 87654
+}

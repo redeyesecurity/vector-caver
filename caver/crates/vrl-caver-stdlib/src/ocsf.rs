@@ -140,7 +140,7 @@ fn classify_winevent(event: &Value) -> (u32, u32) {
         Some(4688) | Some(4697) => (1007, 1), // process create / service install
         Some(4720) | Some(4722) | Some(4723) | Some(4725) | Some(4726) | Some(4738) => (3001, 3),
         Some(4728) | Some(4732) | Some(4756) => (3001, 3), // group membership add
-        _ => (1007, 1), // coarse fallback
+        _ => (1007, 1),                                    // coarse fallback
     }
 }
 
@@ -490,10 +490,7 @@ fn value_to_string(v: &Value) -> String {
 
 /// `event.get(key)` when truthy, as a string — mirrors `if (v := event.get(k)): str(v)`.
 fn truthy_string(event: &Value, key: &str) -> Option<String> {
-    event
-        .get(key)
-        .filter(|v| is_truthy(v))
-        .map(value_to_string)
+    event.get(key).filter(|v| is_truthy(v)).map(value_to_string)
 }
 
 /// First truthy value among `keys` — mirrors `event.get(a) or event.get(b)`.
@@ -506,14 +503,16 @@ fn first_truthy<'a>(event: &'a Value, keys: &[&str]) -> Option<&'a Value> {
 /// Python `_get(record, *keys)`: first key whose value is neither missing,
 /// null, nor the empty string. (0 passes — unlike truthiness.)
 fn pick_raw<'a>(event: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-    keys.iter().filter_map(|k| event.get(*k)).find(|v| {
-        !v.is_null() && v.as_str() != Some("")
-    })
+    keys.iter()
+        .filter_map(|k| event.get(*k))
+        .find(|v| !v.is_null() && v.as_str() != Some(""))
 }
 
 /// `str(_get(record, *keys))` with "" for no match.
 fn pick_string(event: &Value, keys: &[&str]) -> String {
-    pick_raw(event, keys).map(value_to_string).unwrap_or_default()
+    pick_raw(event, keys)
+        .map(value_to_string)
+        .unwrap_or_default()
 }
 
 /// Python `int(v)` over a JSON number or numeric string.
@@ -870,7 +869,10 @@ fn normalize_suricata(event: &Value) -> Value {
     out.insert("class_name".into(), json!("Network Activity"));
     out.insert(
         "suri_event_type".into(),
-        json!(event.get("event_type").and_then(Value::as_str).unwrap_or("")),
+        json!(event
+            .get("event_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")),
     );
 
     if let Some(p) = truthy_string(event, "proto") {
@@ -1026,7 +1028,11 @@ fn normalize_zeek(event: &Value) -> Value {
 
     match log_name.as_str() {
         "conn" => {
-            if let Some(d) = event.get("duration").filter(|v| !v.is_null()).and_then(any_f64) {
+            if let Some(d) = event
+                .get("duration")
+                .filter(|v| !v.is_null())
+                .and_then(any_f64)
+            {
                 out.insert("zk_duration".into(), json!(d));
             }
             lift_int(&mut out, event, "orig_bytes", "zk_orig_bytes");
@@ -1073,18 +1079,43 @@ fn normalize_zeek(event: &Value) -> Value {
         "rdp" => {
             lift_str(&mut out, event, "cookie", "zk_rdp_cookie");
             lift_str(&mut out, event, "result", "zk_rdp_result");
-            lift_str(&mut out, event, "security_protocol", "zk_rdp_security_protocol");
+            lift_str(
+                &mut out,
+                event,
+                "security_protocol",
+                "zk_rdp_security_protocol",
+            );
             lift_str(&mut out, event, "client_name", "zk_rdp_client_name");
             lift_str(&mut out, event, "client_build", "zk_rdp_client_build");
-            lift_str(&mut out, event, "client_dig_product_id", "zk_rdp_client_product_id");
+            lift_str(
+                &mut out,
+                event,
+                "client_dig_product_id",
+                "zk_rdp_client_product_id",
+            );
             lift_str(&mut out, event, "keyboard_layout", "zk_rdp_keyboard_layout");
-            lift_str(&mut out, event, "encryption_level", "zk_rdp_encryption_level");
-            lift_str(&mut out, event, "encryption_method", "zk_rdp_encryption_method");
+            lift_str(
+                &mut out,
+                event,
+                "encryption_level",
+                "zk_rdp_encryption_level",
+            );
+            lift_str(
+                &mut out,
+                event,
+                "encryption_method",
+                "zk_rdp_encryption_method",
+            );
             lift_str(&mut out, event, "cert_type", "zk_rdp_cert_type");
             lift_int(&mut out, event, "cert_count", "zk_rdp_cert_count");
             lift_int(&mut out, event, "desktop_width", "zk_rdp_desktop_width");
             lift_int(&mut out, event, "desktop_height", "zk_rdp_desktop_height");
-            lift_str(&mut out, event, "requested_color_depth", "zk_rdp_color_depth");
+            lift_str(
+                &mut out,
+                event,
+                "requested_color_depth",
+                "zk_rdp_color_depth",
+            );
         }
         "dhcp" => {
             lift_str(&mut out, event, "mac", "zk_dhcp_mac");
@@ -1095,7 +1126,11 @@ fn normalize_zeek(event: &Value) -> Value {
             lift_str(&mut out, event, "client_addr", "zk_dhcp_client_addr");
             lift_str(&mut out, event, "server_addr", "zk_dhcp_server_addr");
             lift_str(&mut out, event, "domain", "zk_dhcp_domain");
-            if let Some(t) = event.get("lease_time").filter(|v| !v.is_null()).and_then(any_f64) {
+            if let Some(t) = event
+                .get("lease_time")
+                .filter(|v| !v.is_null())
+                .and_then(any_f64)
+            {
                 out.insert("zk_dhcp_lease_time".into(), json!(t));
             }
             if let Some(v) = event.get("msg_types").filter(|v| is_truthy(v)) {
@@ -1165,27 +1200,51 @@ fn normalize_palo_alto(event: &Value) -> Value {
     out.insert("type_uid".into(), json!(cls_uid * 100 + act_id));
     out.insert("severity_id".into(), json!(panos_severity(event)));
     out.insert("panos_type".into(), json!(pick_string(event, &["type"])));
-    out.insert("panos_subtype".into(), json!(pick_string(event, &["subtype"])));
-    out.insert("panos_action".into(), json!(pick_string(event, &["action"])));
-    out.insert("panos_serial".into(), json!(pick_string(event, &["serial"])));
+    out.insert(
+        "panos_subtype".into(),
+        json!(pick_string(event, &["subtype"])),
+    );
+    out.insert(
+        "panos_action".into(),
+        json!(pick_string(event, &["action"])),
+    );
+    out.insert(
+        "panos_serial".into(),
+        json!(pick_string(event, &["serial"])),
+    );
     out.insert(
         "panos_device_name".into(),
         json!(pick_string(event, &["device_name", "devicename"])),
     );
     out.insert("panos_vsys".into(), json!(pick_string(event, &["vsys"])));
-    out.insert("panos_rule".into(), json!(pick_string(event, &["rule", "rule_name"])));
-    out.insert("panos_app".into(), json!(pick_string(event, &["app", "application"])));
-    out.insert("panos_proto".into(), json!(pick_string(event, &["proto", "protocol"])));
+    out.insert(
+        "panos_rule".into(),
+        json!(pick_string(event, &["rule", "rule_name"])),
+    );
+    out.insert(
+        "panos_app".into(),
+        json!(pick_string(event, &["app", "application"])),
+    );
+    out.insert(
+        "panos_proto".into(),
+        json!(pick_string(event, &["proto", "protocol"])),
+    );
     out.insert(
         "panos_threatid".into(),
         json!(pick_string(event, &["threatid", "threat_name", "tid"])),
     );
-    out.insert("panos_severity".into(), json!(pick_string(event, &["severity"])));
+    out.insert(
+        "panos_severity".into(),
+        json!(pick_string(event, &["severity"])),
+    );
     out.insert(
         "panos_category".into(),
         json!(pick_string(event, &["category", "url_category_list"])),
     );
-    out.insert("panos_msg".into(), json!(pick_string(event, &["opaque", "msg", "eventid"])));
+    out.insert(
+        "panos_msg".into(),
+        json!(pick_string(event, &["opaque", "msg", "eventid"])),
+    );
 
     if !user.is_empty() {
         out.insert("panos_user".into(), json!(user));
@@ -1214,7 +1273,13 @@ fn normalize_palo_alto(event: &Value) -> Value {
 /// FortiGate severity: UTM `crseverity`/`severity` map first, else the syslog
 /// `level` map (default 2), bumped to ≥3 on deny/blocked actions.
 const FORTI_BLOCK_ACTIONS: &[&str] = &[
-    "deny", "blocked", "block", "dropped", "drop", "reset", "quarantine",
+    "deny",
+    "blocked",
+    "block",
+    "dropped",
+    "drop",
+    "reset",
+    "quarantine",
 ];
 
 fn fortinet_severity(event: &Value) -> i64 {
@@ -1227,16 +1292,17 @@ fn fortinet_severity(event: &Value) -> i64 {
         "info" | "informational" => Some(1),
         _ => None,
     };
-    let mut base = base.unwrap_or_else(|| {
-        match pick_string(event, &["level"]).to_lowercase().as_str() {
-            "emergency" | "alert" | "critical" => 5,
-            "error" => 4,
-            "warning" => 3,
-            "notice" | "information" | "info" => 2,
-            "debug" => 1,
-            _ => 2,
-        }
-    });
+    let mut base =
+        base.unwrap_or_else(
+            || match pick_string(event, &["level"]).to_lowercase().as_str() {
+                "emergency" | "alert" | "critical" => 5,
+                "error" => 4,
+                "warning" => 3,
+                "notice" | "information" | "info" => 2,
+                "debug" => 1,
+                _ => 2,
+            },
+        );
     let action = pick_string(event, &["action"]).to_lowercase();
     if FORTI_BLOCK_ACTIONS.contains(&action.as_str()) {
         base = base.max(3);
@@ -1260,24 +1326,54 @@ fn normalize_fortinet(event: &Value) -> Value {
     out.insert("type_uid".into(), json!(cls_uid * 100 + act_id));
     out.insert("severity_id".into(), json!(fortinet_severity(event)));
     out.insert("fortinet_type".into(), json!(pick_string(event, &["type"])));
-    out.insert("fortinet_subtype".into(), json!(pick_string(event, &["subtype"])));
-    out.insert("fortinet_action".into(), json!(pick_string(event, &["action"])));
-    out.insert("fortinet_logid".into(), json!(pick_string(event, &["logid"])));
+    out.insert(
+        "fortinet_subtype".into(),
+        json!(pick_string(event, &["subtype"])),
+    );
+    out.insert(
+        "fortinet_action".into(),
+        json!(pick_string(event, &["action"])),
+    );
+    out.insert(
+        "fortinet_logid".into(),
+        json!(pick_string(event, &["logid"])),
+    );
     out.insert(
         "fortinet_devname".into(),
         json!(pick_string(event, &["devname", "devid"])),
     );
-    out.insert("fortinet_vd".into(), json!(pick_string(event, &["vd", "vdom"])));
-    out.insert("fortinet_level".into(), json!(pick_string(event, &["level"])));
-    out.insert("fortinet_service".into(), json!(pick_string(event, &["service"])));
-    out.insert("fortinet_proto".into(), json!(pick_string(event, &["proto"])));
-    out.insert("fortinet_app".into(), json!(pick_string(event, &["app", "appcat"])));
+    out.insert(
+        "fortinet_vd".into(),
+        json!(pick_string(event, &["vd", "vdom"])),
+    );
+    out.insert(
+        "fortinet_level".into(),
+        json!(pick_string(event, &["level"])),
+    );
+    out.insert(
+        "fortinet_service".into(),
+        json!(pick_string(event, &["service"])),
+    );
+    out.insert(
+        "fortinet_proto".into(),
+        json!(pick_string(event, &["proto"])),
+    );
+    out.insert(
+        "fortinet_app".into(),
+        json!(pick_string(event, &["app", "appcat"])),
+    );
     out.insert(
         "fortinet_attack".into(),
         json!(pick_string(event, &["attack", "virus", "eventtype"])),
     );
-    out.insert("fortinet_msg".into(), json!(pick_string(event, &["msg", "logdesc"])));
-    out.insert("fortinet_policyid".into(), json!(pick_string(event, &["policyid"])));
+    out.insert(
+        "fortinet_msg".into(),
+        json!(pick_string(event, &["msg", "logdesc"])),
+    );
+    out.insert(
+        "fortinet_policyid".into(),
+        json!(pick_string(event, &["policyid"])),
+    );
 
     if !user.is_empty() {
         out.insert("fortinet_user".into(), json!(user));
@@ -1494,7 +1590,10 @@ mod tests {
         assert_eq!(out["category_uid"], 3);
         assert_eq!(out["computer"], "DESKTOP-ABC");
         assert_eq!(out["channel"], "Security");
-        assert!(out.get("_vendor").is_none(), "_vendor routing tag must be dropped");
+        assert!(
+            out.get("_vendor").is_none(),
+            "_vendor routing tag must be dropped"
+        );
     }
 
     #[test]
@@ -1518,7 +1617,10 @@ mod tests {
         assert_eq!(out["suri_event_type"], "flow");
         assert_eq!(out["src_endpoint.ip"], "10.0.0.1");
         assert_eq!(out["src_endpoint.port"], 1234);
-        assert!(out.get("activity_id").is_none(), "activity_id is alert-only");
+        assert!(
+            out.get("activity_id").is_none(),
+            "activity_id is alert-only"
+        );
     }
 
     #[test]

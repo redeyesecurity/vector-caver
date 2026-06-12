@@ -1,0 +1,17 @@
+{
+  "_vendor": "palo_alto",
+  "type": "TRAFFIC",
+  "subtype": "deny",
+  "serial": "001801012345",
+  "device_name": "PA-VM-EDGE-01",
+  "vsys": "vsys1",
+  "rule": "deny-outbound-smb",
+  "app": "ms-ds-smb",
+  "proto": "tcp",
+  "action": "deny",
+  "src": "10.0.0.31",
+  "dst": "198.51.100.7",
+  "sport": "49733",
+  "dport": "445",
+  "srcuser": "corp\\bob"
+}
