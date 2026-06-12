@@ -40,17 +40,26 @@ pub const STAGING_REQUIRED: &[&str] = &[
     "_raw",
 ];
 
+/// Parse a numeric cell like the Python writer's `float(v)`: tolerate
+/// surrounding whitespace (Python `float(' 3.5 ')` == 3.5).
+pub(crate) fn parse_f64(s: &str) -> Option<f64> {
+    s.trim().parse::<f64>().ok()
+}
+
 /// `int(float(v))` semantics of the Python writer: parse as float then
-/// truncate toward zero; missing/unparseable → 0.
+/// truncate toward zero; missing/unparseable → 0. Non-finite values also
+/// coerce to 0 (Python raises OverflowError and loses the batch; saturating
+/// to i64::MAX in a pushdown enum column would be silent corruption).
 fn as_i64(v: Option<&String>) -> i64 {
-    v.and_then(|s| s.parse::<f64>().ok())
+    v.and_then(|s| parse_f64(s))
+        .filter(|f| f.is_finite())
         .map(|f| f as i64)
         .unwrap_or(0)
 }
 
 /// Missing/unparseable → 0.0, matching the Python writer's `_as_float`.
 fn as_f64(v: Option<&String>) -> f64 {
-    v.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+    v.and_then(|s| parse_f64(s)).unwrap_or(0.0)
 }
 
 /// Build a caver_staging-typed Arrow RecordBatch, mirroring the Python
@@ -96,6 +105,35 @@ pub fn rows_to_staging_record_batch(
 
     let schema = Arc::new(Schema::new(fields));
     RecordBatch::try_new(schema, arrays)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn int_coercion_python_parity() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(as_i64(s("3.9").as_ref()), 3, "int(float(v)) truncation");
+        assert_eq!(as_i64(s(" 42 ").as_ref()), 42, "float(' 42 ') trims");
+        assert_eq!(as_i64(s("garbage").as_ref()), 0);
+        assert_eq!(as_i64(None), 0);
+        // Non-finite: Python raises OverflowError and DLQs the batch; we
+        // coerce to 0 instead of silently saturating to i64::MAX.
+        assert_eq!(as_i64(s("inf").as_ref()), 0);
+        assert_eq!(as_i64(s("-inf").as_ref()), 0);
+        assert_eq!(as_i64(s("NaN").as_ref()), 0);
+    }
+
+    #[test]
+    fn float_coercion_python_parity() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(as_f64(s(" 1.5 ").as_ref()), 1.5);
+        assert_eq!(as_f64(s("nope").as_ref()), 0.0);
+        assert_eq!(as_f64(None), 0.0);
+        // Python float('inf') succeeds and stores inf — parity.
+        assert!(as_f64(s("inf").as_ref()).is_infinite());
+    }
 }
 
 /// Build an Arrow RecordBatch from a slice of flat string-valued rows.

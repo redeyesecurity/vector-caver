@@ -82,7 +82,9 @@ fn hostname() -> String {
 /// remaining required string columns default to `""`.
 fn staging_row(row: &HashMap<String, String>, now: DateTime<Utc>) -> HashMap<String, String> {
     let mut out = row.clone();
-    let time_ok = out.get("_time").is_some_and(|s| s.parse::<f64>().is_ok());
+    let time_ok = out
+        .get("_time")
+        .is_some_and(|s| crate::schema::parse_f64(s).is_some());
     if !time_ok {
         out.insert(
             "_time".into(),
@@ -178,9 +180,12 @@ impl ParquetSink {
                     batch.iter().map(|r| staging_row(r, now)).collect();
                 // Partition by the first row's event time, like the Python
                 // sink's `_build_staging_key(rows[0])`.
+                // Non-finite `_time` (parse accepts "inf"/"NaN") keys to flush
+                // time rather than a bogus 1970 partition.
                 let ts = rows[0]
                     .get("_time")
-                    .and_then(|s| s.parse::<f64>().ok())
+                    .and_then(|s| crate::schema::parse_f64(s))
+                    .filter(|t| t.is_finite())
                     .and_then(epoch_to_datetime)
                     .unwrap_or(now);
                 let key = build_staging_key(
@@ -390,6 +395,35 @@ mod tests {
         );
         assert!(key.ends_with(".parquet"));
         assert_eq!(&body[..4], b"PAR1");
+    }
+
+    #[test]
+    fn staging_flush_without_time_keys_to_now() {
+        let captured: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let cap2 = captured.clone();
+        let put: PutFn = Arc::new(move |_b, key: &str, _body| {
+            cap2.lock().unwrap().push(key.into());
+            Ok(())
+        });
+
+        let cfg = Config {
+            batch_size: 1,
+            source: Some("edge-src".into()),
+            ..Config::default()
+        };
+        let sink = ParquetSink::new(cfg, Some(put));
+        let before = Utc::now();
+        sink.send(HashMap::from([("msg".into(), "no time field".into())]));
+
+        let keys = captured.lock().unwrap();
+        assert_eq!(keys.len(), 1);
+        // staging_row injected _time = now, so the key partitions on today.
+        let expected = format!("uf/ocsf/edge-src/year={}", before.format("%Y"));
+        assert!(
+            keys[0].starts_with(&expected),
+            "keyed to now, got {}",
+            keys[0]
+        );
     }
 
     #[test]

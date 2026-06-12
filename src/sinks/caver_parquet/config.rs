@@ -66,12 +66,14 @@ const fn default_timeout_ms() -> u64 {
 }
 
 /// Charset safe to embed raw in an object key (and the SigV4 canonical path):
-/// anything outside it (`/`, `..`, spaces) breaks the lake layout or 403s
-/// whole batches.
+/// anything outside it (`/`, spaces) breaks the lake layout or 403s whole
+/// batches. All-dot segments (`.`, `..`) are also rejected — S3 stores them
+/// literally, but they confuse path-mapped tooling and listings.
 fn is_key_safe(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && !s.bytes().all(|b| b == b'.')
 }
 
 /// Configuration for the `caver_parquet` sink.

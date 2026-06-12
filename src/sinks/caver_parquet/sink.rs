@@ -66,8 +66,11 @@ fn value_to_string(value: &Value) -> String {
 /// Alias Vector log conventions onto the caver_staging contract columns,
 /// without clobbering values the pipeline set explicitly:
 /// `timestamp` (RFC 3339, the flattened form of `Value::Timestamp`) → `_time`
-/// (epoch seconds), `message` → `_raw`. Anything still missing afterwards is
-/// defaulted by the crate's row prep (`_time` → now, `_raw` → `""`).
+/// (epoch seconds), `message` → `_raw`. The source key is MOVED, not copied —
+/// otherwise every default-layout object would store the (typically largest)
+/// payload twice and diverge schema-wise from collector-written staging
+/// files. Keys that fail to alias stay put; anything still missing afterwards
+/// is defaulted by the crate's row prep (`_time` → now, `_raw` → `""`).
 fn alias_staging_fields(row: &mut HashMap<String, String>) {
     if !row.contains_key("_time")
         && let Some(ts) = row
@@ -78,11 +81,12 @@ fn alias_staging_fields(row: &mut HashMap<String, String>) {
             "_time".to_string(),
             format!("{:.6}", ts.timestamp_micros() as f64 / 1e6),
         );
+        row.remove("timestamp");
     }
     if !row.contains_key("_raw")
-        && let Some(msg) = row.get("message")
+        && let Some(msg) = row.remove("message")
     {
-        row.insert("_raw".to_string(), msg.clone());
+        row.insert("_raw".to_string(), msg);
     }
 }
 
@@ -321,7 +325,8 @@ mod tests {
 
     #[test]
     fn alias_staging_fields_maps_vector_conventions() {
-        // timestamp -> _time, message -> _raw.
+        // timestamp -> _time, message -> _raw; the source keys are MOVED so
+        // the object doesn't store the payload twice.
         let mut row = HashMap::from([
             (
                 "timestamp".to_string(),
@@ -332,8 +337,10 @@ mod tests {
         alias_staging_fields(&mut row);
         assert_eq!(row["_time"], "1781276645.250000");
         assert_eq!(row["_raw"], "raw line");
+        assert!(!row.contains_key("timestamp"), "consumed by the alias");
+        assert!(!row.contains_key("message"), "consumed by the alias");
 
-        // Explicit `_time`/`_raw` win over the aliases.
+        // Explicit `_time`/`_raw` win; unconsumed source keys stay put.
         let mut row = HashMap::from([
             ("timestamp".to_string(), "2026-06-12T15:04:05Z".to_string()),
             ("_time".to_string(), "1700000000.0".to_string()),
@@ -343,10 +350,14 @@ mod tests {
         alias_staging_fields(&mut row);
         assert_eq!(row["_time"], "1700000000.0");
         assert_eq!(row["_raw"], "original raw");
+        assert_eq!(row["timestamp"], "2026-06-12T15:04:05Z");
+        assert_eq!(row["message"], "msg");
 
-        // Unparseable timestamp: leave it to the crate's now-default.
+        // Unparseable timestamp: leave it (and the key) to the crate's
+        // now-default.
         let mut row = HashMap::from([("timestamp".to_string(), "not-a-date".to_string())]);
         alias_staging_fields(&mut row);
         assert!(!row.contains_key("_time"));
+        assert_eq!(row["timestamp"], "not-a-date", "not consumed on failure");
     }
 }
