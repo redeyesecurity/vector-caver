@@ -51,11 +51,16 @@ pub fn normalize(event: &Value) -> Value {
     match vendor {
         "okta" => normalize_okta_auth(event),
         "nginx" => normalize_nginx_http(event),
-        // Sysmon EventID 1 (ProcessCreate) has a full normalizer; every other
-        // EventID mirrors Python ocsf_classify, which "writes only class_uid
-        // and category_uid" onto the event.
+        // Sysmon EventID 1 (ProcessCreate) has a full normalizer for the raw
+        // Windows shape (top-level PascalCase keys — gated on `Image`, which
+        // every raw ProcessCreate carries). The parse_sysmon bridge shape
+        // nests fields under `process`/`parent_process`, so running the
+        // raw-shape normalizer on it would emit a hollow event (time 0,
+        // empty uid/path/cmd_line); it passes through with classification
+        // only, like every other EventID — mirroring Python ocsf_classify,
+        // which "writes only class_uid and category_uid" onto the event.
         "sysmon" => {
-            if event_id_of(event) == Some(1) {
+            if event_id_of(event) == Some(1) && event.get("Image").is_some() {
                 normalize_sysmon_process(event)
             } else {
                 classify_passthrough(event, class_uid, category_uid)
@@ -516,9 +521,22 @@ fn pick_string(event: &Value, keys: &[&str]) -> String {
 }
 
 /// Python `int(v)` over a JSON number or numeric string.
+///
+/// `int()` truncates floats toward zero (`int(1024.7)` == 1024), so JSON
+/// floats — a routine artifact of float-normalizing re-serializers upstream
+/// (`80.0` for a port, `1.0` for a severity) — must coerce, not drop. The
+/// f64 branch also covers u64 values past `i64::MAX` (saturating, the
+/// closest i64-representable to Python's unbounded int). Numeric *strings*
+/// stay strict-integer: Python `int("80.0")` raises too.
 fn any_i64(v: &Value) -> Option<i64> {
     if let Some(n) = v.as_i64() {
         return Some(n);
+    }
+    if let Some(f) = v.as_f64() {
+        if f.is_finite() {
+            return Some(f.trunc() as i64);
+        }
+        return None;
     }
     v.as_str().and_then(|s| s.trim().parse::<i64>().ok())
 }
@@ -1605,6 +1623,53 @@ mod tests {
         assert_eq!(out["category_uid"], 4);
         assert_eq!(out["src_ip"], "10.0.0.1");
         assert!(out.get("_vendor").is_none());
+    }
+
+    #[test]
+    fn normalize_sysmon_eid1_bridge_shape_is_passthrough_not_hollow() {
+        // parse_sysmon nests ProcessCreate fields under process/parent_process;
+        // the raw-shape normalizer must NOT run on it (it would emit a hollow
+        // event: time 0, empty uid/path/cmd_line). Regression for review B1.
+        let ev = json!({"_vendor": "sysmon", "event_id": 1,
+                        "process": {"image": "C:\\evil.exe", "pid": 4242,
+                                    "command_line": "evil.exe -x"},
+                        "parent_process": {"image": "C:\\Windows\\explorer.exe"},
+                        "computer": "DESKTOP-ABC"});
+        let out = normalize(&ev);
+        assert_eq!(out["class_uid"], 1007);
+        assert_eq!(out["category_uid"], 1);
+        assert_eq!(out["process"]["image"], "C:\\evil.exe");
+        assert_eq!(out["process"]["pid"], 4242);
+        assert!(out.get("_vendor").is_none());
+        assert!(
+            out.get("time").is_none() && out.get("type_uid").is_none(),
+            "raw-shape normalizer must not run on the bridge shape"
+        );
+    }
+
+    #[test]
+    fn any_i64_truncates_floats_like_python_int() {
+        // Python int(): int(1.0)==1, int(1024.7)==1024, int(-3.7)==-3;
+        // int("80.0") raises. Regression for review B2.
+        assert_eq!(any_i64(&json!(1.0)), Some(1));
+        assert_eq!(any_i64(&json!(1024.7)), Some(1024));
+        assert_eq!(any_i64(&json!(-3.7)), Some(-3));
+        assert_eq!(any_i64(&json!("80.0")), None);
+        assert_eq!(any_i64(&json!("  80 ")), Some(80));
+    }
+
+    #[test]
+    fn normalize_suricata_float_severity_and_port_coerce() {
+        // Float-ified integers (x.0) are routine from float-normalizing
+        // re-serializers; Python int() coerces them. A High (1) detection
+        // must not silently downgrade to the default severity.
+        let ev = json!({"_vendor": "suricata", "event_type": "alert",
+                        "src_ip": "10.0.0.1", "src_port": 80.0,
+                        "alert": {"severity": 1.0, "signature": "x"}});
+        let out = normalize(&ev);
+        assert_eq!(out["severity_id"], 4, "severity 1.0 must map High like 1");
+        assert_eq!(out["src_endpoint.port"], 80);
+        assert_eq!(out["src_port"], 80);
     }
 
     #[test]
