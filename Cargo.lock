@@ -2436,7 +2436,7 @@ dependencies = [
 
 [[package]]
 name = "caver-sink-parquet"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arrow 56.2.0",
  "bytes",
