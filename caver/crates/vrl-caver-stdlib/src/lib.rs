@@ -7,3 +7,4 @@
 pub mod ocsf;
 pub mod parsers;
 pub mod threat_intel;
+pub mod vrl_fns;
