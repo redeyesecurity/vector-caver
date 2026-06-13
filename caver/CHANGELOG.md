@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.0] - 2026-06-13
+
+### Added
+- **OCSF normalization is now callable from VRL** (caver-collector#906): the
+  `vrl-caver-stdlib` OCSF/parser/threat-intel helpers are exposed as real VRL
+  `Function`s and wired into the runnable Vector binary behind a `caver` feature
+  (same mechanism as Vector's own `dnstap`/`enrichment` functions). Build the
+  collector with `--features caver` and a `remap` can call them directly — this
+  closes the gap where collected events landed with `class_uid = 0` because no
+  classification ran in-pipeline.
+  - 18 functions under `vrl-caver-stdlib/src/vrl_fns/`: `ocsf_classify`,
+    `ocsf_normalize`, `ocsf_severity`, `parse_suricata_eve`, `parse_zeek`,
+    `parse_winevent`, `parse_sysmon`, `entity_id`, `redact_pii`, `is_internal_ip`,
+    `attack_tactic_lookup`, `hash_imphash`, `dns_resolve_cached`, and the
+    threat-intel stubs (`attack_technique_match`, `cve_enrich`,
+    `threat_indicator_match`, `geoip_caver`, `asn_lookup`)
+  - `serde_json::Value` ↔ VRL `Value` conversion bridge in `vrl_fns/mod.rs`
+
+### Fixed
+- `parse_winevent`: bounded slice in `extract_event_data()` — no longer panics
+  (out-of-bounds / mid-codepoint) on truncated or hostile `<Data Name="…">` input
+- `is_internal_ip`: guard `parse_ipv6()` against `usize` underflow on malformed
+  IPv6 (too many groups around `::`)
+
 ## [0.9.0] - 2026-06-12
 
 ### Added
