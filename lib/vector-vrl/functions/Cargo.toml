@@ -10,6 +10,10 @@ license = "MPL-2.0"
 indoc.workspace = true
 vrl.workspace = true
 enrichment = { path = "../enrichment" }
+# Caver OCSF/parser/threat-intel functions — default-on, not feature-gated:
+# the OCSF VRL framework is part of the lean default binary
+# (caver-collector#890 scope, wired by caver-collector#904).
+vector-vrl-caver-stdlib = { path = "../caver-stdlib" }
 dnstap-parser = { path = "../dnstap-parser", optional = true }
 vector-vrl-metrics = { path = "../metrics", optional = true }
 vector-vrl-category.workspace = true

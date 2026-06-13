@@ -28,6 +28,7 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
 
     let event_type = ev.get("event_type").and_then(Value::as_str).unwrap_or("");
     let mut out = json!({
+        "_vendor":    "suricata",
         "event_type": event_type,
         "timestamp":  ev.get("timestamp").and_then(Value::as_str).unwrap_or(""),
         "src_ip":     ev.get("src_ip").and_then(Value::as_str).unwrap_or(""),
@@ -43,6 +44,12 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
     }
     if let Some(id) = ev.get("flow_id").and_then(Value::as_u64) {
         out["flow_id"] = json!(id);
+    }
+    if let Some(ap) = ev.get("app_proto").and_then(Value::as_str) {
+        out["app_proto"] = json!(ap);
+    }
+    if let Some(iface) = ev.get("in_iface").and_then(Value::as_str) {
+        out["in_iface"] = json!(iface);
     }
 
     match event_type {
@@ -78,6 +85,16 @@ pub fn parse_suricata_eve(raw: &str) -> Value {
                     "rrname": d.get("rrname").and_then(Value::as_str).unwrap_or(""),
                     "rrtype": d.get("rrtype").and_then(Value::as_str).unwrap_or(""),
                     "rcode":  d.get("rcode").and_then(Value::as_str).unwrap_or(""),
+                });
+            }
+        }
+        "tls" => {
+            if let Some(t) = ev.get("tls") {
+                out["tls"] = json!({
+                    "sni":     t.get("sni").and_then(Value::as_str).unwrap_or(""),
+                    "version": t.get("version").and_then(Value::as_str).unwrap_or(""),
+                    "subject": t.get("subject").and_then(Value::as_str).unwrap_or(""),
+                    "issuerdn": t.get("issuerdn").and_then(Value::as_str).unwrap_or(""),
                 });
             }
         }
@@ -126,22 +143,32 @@ fn normalise_zeek_json(v: Value, log_type: &str) -> Value {
     // common fields into the top level for uniform downstream consumption.
     let ts = v.get("ts").and_then(Value::as_f64).unwrap_or(0.0);
     let uid = v.get("uid").and_then(Value::as_str).unwrap_or("");
-    let orig_h = v.get("id.orig_h").and_then(Value::as_str).unwrap_or("");
-    let orig_p = v.get("id.orig_p").and_then(Value::as_u64).unwrap_or(0);
-    let resp_h = v.get("id.resp_h").and_then(Value::as_str).unwrap_or("");
-    let resp_p = v.get("id.resp_p").and_then(Value::as_u64).unwrap_or(0);
     let proto = v.get("proto").and_then(Value::as_str).unwrap_or("");
 
     let mut out = json!({
+        "_vendor":  "zeek",
         "log_type": log_type,
         "ts":       ts,
         "uid":      uid,
-        "src_ip":   orig_h,
-        "src_port": orig_p,
-        "dest_ip":  resp_h,
-        "dest_port": resp_p,
         "proto":    proto,
     });
+
+    // Connection tuple: omit missing fields rather than fabricating
+    // `src_ip: ""` / `src_port: 0` — normalize()'s bridge fallback lifts
+    // whatever is present, and a fabricated port 0 would survive its
+    // numeric (non-truthy) gate while the empty IP is skipped.
+    if let Some(h) = v.get("id.orig_h").and_then(Value::as_str) {
+        out["src_ip"] = json!(h);
+    }
+    if let Some(p) = v.get("id.orig_p").and_then(Value::as_u64) {
+        out["src_port"] = json!(p);
+    }
+    if let Some(h) = v.get("id.resp_h").and_then(Value::as_str) {
+        out["dest_ip"] = json!(h);
+    }
+    if let Some(p) = v.get("id.resp_p").and_then(Value::as_u64) {
+        out["dest_port"] = json!(p);
+    }
 
     match log_type {
         "conn" => {
@@ -191,6 +218,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
     match log_type {
         "conn" if fields.len() >= 21 => {
             json!({
+                "_vendor":     "zeek",
                 "log_type":    "conn",
                 "ts":          fields[0].parse::<f64>().ok(),
                 "uid":         fields[1],
@@ -208,6 +236,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
         }
         "dns" if fields.len() >= 22 => {
             json!({
+                "_vendor":   "zeek",
                 "log_type":  "dns",
                 "ts":        fields[0].parse::<f64>().ok(),
                 "uid":       fields[1],
@@ -223,6 +252,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
         }
         "http" if fields.len() >= 26 => {
             json!({
+                "_vendor":     "zeek",
                 "log_type":    "http",
                 "ts":          fields[0].parse::<f64>().ok(),
                 "uid":         fields[1],
@@ -250,7 +280,7 @@ fn parse_zeek_tsv(line: &str, log_type: &str) -> Value {
 /// Parse Windows Event Log XML into a structured JSON object.
 /// Extracts System fields and EventData key/value pairs.
 pub fn parse_winevent(raw: &str) -> Value {
-    let mut out = json!({});
+    let mut out = json!({"_vendor": "winevent"});
 
     // System section
     out["event_id"] = extract_xml_text(raw, "EventID").map_or(Value::Null, |s| {
@@ -309,7 +339,11 @@ fn extract_event_data(xml: &str) -> serde_json::Map<String, Value> {
             None => break,
         };
         let name = rest[..name_end].to_string();
-        rest = &rest[name_end + 2..]; // skip past `">`
+        // name_end indexes the closing ASCII '"' (so name_end + 1 is a char boundary <= len);
+        // optionally strip the following '>'. Avoids out-of-bounds / mid-codepoint panics on
+        // truncated or hostile input (e.g. `<Data Name="x"` or a multibyte char after the quote).
+        let after = &rest[name_end + 1..];
+        rest = after.strip_prefix('>').unwrap_or(after);
         let val_end = match rest.find("</Data>") {
             Some(p) => p,
             None => break,
@@ -352,6 +386,7 @@ fn parse_sysmon_object(ev: &Value) -> Value {
     let event_id: u64 = ev.get("event_id").and_then(Value::as_u64).unwrap_or(0);
 
     let mut out = json!({
+        "_vendor":  "sysmon",
         "event_id": event_id,
         "computer": ev.get("computer").and_then(Value::as_str).unwrap_or(""),
         "time_created": ev.get("time_created").and_then(Value::as_str).unwrap_or(""),
@@ -677,6 +712,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn winevent_hostile_input_does_not_panic() {
+        // Regression: extract_event_data() sliced `name_end + 2` without bounds/boundary
+        // checks → out-of-bounds panic on truncated input and mid-codepoint panic on a
+        // multibyte char after the closing quote. Must parse cleanly, never panic.
+        for raw in [
+            r#"<Data Name="x""#,
+            "<Data Name=\"x\"\u{20ac}rest</Data>",
+            r#"<Data Name=""#,
+            "<Data Name=\"a\">v</Data>",
+            "",
+        ] {
+            let _ = parse_winevent(raw);
+        }
+    }
+
+    #[test]
     fn suricata_alert_parse() {
         let raw = r#"{
             "timestamp": "2026-05-28T10:00:00.000Z",
@@ -698,6 +749,7 @@ mod tests {
             }
         }"#;
         let v = parse_suricata_eve(raw);
+        assert_eq!(v["_vendor"], "suricata");
         assert_eq!(v["event_type"], "alert");
         assert_eq!(v["src_ip"], "10.0.0.1");
         assert_eq!(v["alert"]["signature_id"], 2100498u64);
@@ -708,16 +760,38 @@ mod tests {
     fn suricata_invalid_json() {
         let v = parse_suricata_eve("not json");
         assert!(v["error"].is_string());
+        // error objects carry no vendor tag
+        assert!(v.get("_vendor").is_none());
     }
 
     #[test]
     fn zeek_conn_json() {
         let line = r#"{"ts":1748426400.0,"uid":"C1234","id.orig_h":"10.0.0.1","id.orig_p":54321,"id.resp_h":"1.2.3.4","id.resp_p":443,"proto":"tcp","service":"ssl","duration":0.5,"orig_bytes":1024,"resp_bytes":2048,"conn_state":"SF","missed_bytes":0}"#;
         let v = parse_zeek(line, "conn");
+        assert_eq!(v["_vendor"], "zeek");
         assert_eq!(v["log_type"], "conn");
         assert_eq!(v["src_ip"], "10.0.0.1");
         assert_eq!(v["dest_port"], 443u64);
         assert_eq!(v["conn_state"], "SF");
+    }
+
+    #[test]
+    fn zeek_json_missing_tuple_omits_keys() {
+        // Logs without the conn 4-tuple (files, x509, weird) must not grow
+        // fabricated src_ip: ""/src_port: 0 — absent input keys stay absent.
+        let line = r#"{"ts":1748426400.0,"uid":"F1","fuid":"Fabc","total_bytes":512}"#;
+        let v = parse_zeek(line, "files");
+        assert_eq!(v["_vendor"], "zeek");
+        assert_eq!(v["log_type"], "files");
+        for k in ["src_ip", "src_port", "dest_ip", "dest_port"] {
+            assert!(v.get(k).is_none(), "{k} must be omitted when absent");
+        }
+        // partial tuple: only the present halves appear
+        let line = r#"{"ts":1748426400.0,"uid":"C2","id.orig_h":"10.0.0.1","id.orig_p":1234}"#;
+        let v = parse_zeek(line, "conn");
+        assert_eq!(v["src_ip"], "10.0.0.1");
+        assert_eq!(v["src_port"], 1234u64);
+        assert!(v.get("dest_ip").is_none() && v.get("dest_port").is_none());
     }
 
     #[test]
@@ -737,6 +811,7 @@ mod tests {
           </EventData>
         </Event>"#;
         let v = parse_winevent(xml);
+        assert_eq!(v["_vendor"], "winevent");
         assert_eq!(v["event_id"], 4625u64);
         assert_eq!(v["computer"], "DESKTOP-ABC");
         assert_eq!(v["provider"], "Microsoft-Windows-Security-Auditing");
@@ -761,6 +836,7 @@ mod tests {
             }
         });
         let v = parse_sysmon(&ev);
+        assert_eq!(v["_vendor"], "sysmon");
         assert_eq!(v["event_id"], 1u64);
         assert_eq!(v["process"]["pid"], 4892u64);
         assert_eq!(v["process"]["image"], "C:\\Windows\\System32\\cmd.exe");

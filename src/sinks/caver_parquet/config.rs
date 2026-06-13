@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use futures::{FutureExt, future};
+use futures::FutureExt;
 use vector_lib::configurable::configurable_component;
 
 use crate::{
@@ -61,8 +61,20 @@ const fn default_retry_base_ms() -> u64 {
     200
 }
 
+const fn default_flush_seconds() -> u64 {
+    30
+}
+
+const fn default_flush_max_age_seconds() -> u64 {
+    300
+}
+
 const fn default_timeout_ms() -> u64 {
     30_000
+}
+
+const fn default_put_deadline_ms() -> u64 {
+    45_000
 }
 
 /// Charset safe to embed raw in an object key (and the SigV4 canonical path):
@@ -137,12 +149,48 @@ pub struct CaverParquetConfig {
     #[configurable(metadata(docs::examples = 500))]
     pub batch_size: usize,
 
+    /// Timer-flush tick interval, in seconds.
+    ///
+    /// A background timer wakes this often to apply the
+    /// `flush_max_age_seconds` freshness backstop. Matches the Python
+    /// collector sink's `flush_seconds`.
+    #[serde(default = "default_flush_seconds")]
+    pub flush_seconds: u64,
+
+    /// Freshness backstop for a below-`batch_size` buffer, in seconds.
+    ///
+    /// The sink writes a Parquet object when `batch_size` events have
+    /// buffered; a low-rate source can take a long time to get there. A timer
+    /// tick drains a below-`batch_size` buffer anyway once its oldest event
+    /// has waited this long, so trickle sources keep shipping. `0` = drain on
+    /// every tick (worst-case latency ≈ `flush_seconds`, at the cost of tiny
+    /// Parquet objects from low-rate sources).
+    ///
+    /// Trade-off (same numbers as the Python collector sink,
+    /// caver-collector#888): worst-case event latency and the crash-loss
+    /// window for a below-`batch_size` buffer are ≈ this value plus up to one
+    /// `flush_seconds` tick. Lower it (e.g. `15`) for freshness-sensitive
+    /// deployments; keep the default where lake efficiency (fewer, larger
+    /// objects) matters more.
+    ///
+    /// Migrating from the Python collector sink: there is no separate
+    /// `min_rows` knob here — the timer-path floor is `batch_size`. Python's
+    /// `min_rows: 0` (ship every tick regardless of age) maps to
+    /// `flush_max_age_seconds: 0`.
+    #[serde(default = "default_flush_max_age_seconds")]
+    pub flush_max_age_seconds: u64,
+
     /// Local directory receiving failed batches as ndjson (dead-letter queue).
     ///
     /// Events are acknowledged when accepted into a batch, **before** the
     /// object PUT — a later PUT failure does not NACK them. Failed batches go
     /// here; if unset they are dropped (logged at error level and counted in
     /// `component_discarded_events_total`).
+    ///
+    /// Row shape depends on `layout`: `caver_staging` DLQ rows are
+    /// post-preparation (string-typed `_time`, injected `index`/`class_uid`
+    /// defaults), `native` rows are the raw accepted maps. Replay tooling
+    /// must handle both shapes.
     #[configurable(metadata(docs::examples = "/var/lib/caver/dlq"))]
     pub dlq_path: Option<PathBuf>,
 
@@ -184,6 +232,17 @@ pub struct CaverParquetConfig {
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
 
+    /// Total wall-clock budget for one PUT *including* every retry and
+    /// backoff sleep, in milliseconds.
+    ///
+    /// This bounds the final shutdown flush: with the retry defaults the
+    /// unbounded worst case was ~121s — longer than
+    /// `graceful_shutdown_limit_secs` (default 60) — so the last,
+    /// already-acknowledged batch could be force-killed mid-retry and lost
+    /// without reaching the DLQ. Keep this below the shutdown grace.
+    #[serde(default = "default_put_deadline_ms")]
+    pub put_deadline_ms: u64,
+
     #[configurable(derived)]
     #[serde(
         default,
@@ -204,6 +263,8 @@ impl Default for CaverParquetConfig {
             writer_name: default_writer_name(),
             staging_prefix: default_staging_prefix(),
             batch_size: default_batch_size(),
+            flush_seconds: default_flush_seconds(),
+            flush_max_age_seconds: default_flush_max_age_seconds(),
             dlq_path: None,
             endpoint: None,
             region: default_region(),
@@ -213,6 +274,7 @@ impl Default for CaverParquetConfig {
             max_retries: default_max_retries(),
             retry_base_ms: default_retry_base_ms(),
             timeout_ms: default_timeout_ms(),
+            put_deadline_ms: default_put_deadline_ms(),
             acknowledgements: AcknowledgementsConfig::default(),
         }
     }
@@ -224,6 +286,18 @@ impl SinkConfig for CaverParquetConfig {
     async fn build(&self, _cx: SinkContext) -> crate::Result<(VectorSink, Healthcheck)> {
         if self.batch_size == 0 {
             return Err("`batch_size` must be at least 1".into());
+        }
+        if self.flush_seconds == 0 {
+            return Err(
+                "`flush_seconds` must be at least 1 (it is the timer-flush tick \
+                 that applies the `flush_max_age_seconds` freshness backstop)"
+                    .into(),
+            );
+        }
+        if self.put_deadline_ms == 0 {
+            return Err("`put_deadline_ms` must be at least 1 (it is the total \
+                 wall-clock budget for a PUT including retries)"
+                .into());
         }
         if let Some(sensor_id) = &self.sensor_id
             && !is_key_safe(sensor_id)
@@ -282,10 +356,21 @@ impl SinkConfig for CaverParquetConfig {
             max_retries: self.max_retries,
             retry_base_ms: self.retry_base_ms,
             timeout_ms: self.timeout_ms,
+            put_deadline_ms: self.put_deadline_ms,
         };
         // Fails fast on missing credential env vars or a bad endpoint, so a
         // misconfigured sink refuses to boot instead of dropping data later.
-        let put_fn = caver_sink_parquet::s3_put_fn(s3_cfg).map_err(|e| e.to_string())?;
+        // One transport shared by the PUT path and the healthcheck probe.
+        let transport = Arc::new(
+            caver_sink_parquet::S3Transport::from_config(s3_cfg).map_err(|e| e.to_string())?,
+        );
+        let put_transport = Arc::clone(&transport);
+        let put_fn: caver_sink_parquet::PutFn =
+            Arc::new(move |bucket: &str, key: &str, body: Vec<u8>| {
+                put_transport
+                    .put(bucket, key, &body)
+                    .map_err(|e| e.to_string())
+            });
 
         let layout = match self.layout {
             LayoutConfig::CaverStaging => caver_sink_parquet::Layout::CaverStaging,
@@ -295,6 +380,8 @@ impl SinkConfig for CaverParquetConfig {
             bucket: self.bucket.clone(),
             class_uid_field: self.class_uid_field.clone(),
             batch_size: self.batch_size,
+            flush_seconds: self.flush_seconds,
+            flush_max_age_seconds: self.flush_max_age_seconds,
             dlq_path: self.dlq_path.clone(),
             layout,
             source: self.source.clone(),
@@ -312,7 +399,21 @@ impl SinkConfig for CaverParquetConfig {
             self.dlq_path.is_some(),
             self.layout == LayoutConfig::CaverStaging,
         );
-        let healthcheck = future::ok(()).boxed();
+        // Signed HEAD on the bucket so boot / `vector validate` (with
+        // healthchecks enabled) catches wrong credentials, bucket, or region
+        // before events flow. The transport is sync (ureq), so probe on the
+        // blocking pool.
+        let hc_bucket = self.bucket.clone();
+        let healthcheck = async move {
+            tokio::task::spawn_blocking(move || {
+                transport
+                    .head_bucket(&hc_bucket)
+                    .map_err(|e| -> crate::Error { e.to_string().into() })
+            })
+            .await
+            .map_err(|e| -> crate::Error { e.to_string().into() })?
+        }
+        .boxed();
 
         Ok((VectorSink::Stream(Box::new(sink)), healthcheck))
     }

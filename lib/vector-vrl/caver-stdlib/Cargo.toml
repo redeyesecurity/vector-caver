@@ -1,0 +1,15 @@
+[package]
+name = "vector-vrl-caver-stdlib"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MPL-2.0"
+
+[dependencies]
+chrono.workspace = true
+serde_json.workspace = true
+vrl.workspace = true
+# The domain logic: a pure serde_json crate in the (workspace-excluded)
+# caver/ workspace, shared with non-Vector consumers. This crate is only
+# the `vrl::compiler::Function` adapter layer around it.
+vrl-caver-stdlib = { path = "../../../caver/crates/vrl-caver-stdlib" }

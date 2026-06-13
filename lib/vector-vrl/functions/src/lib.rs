@@ -5,6 +5,7 @@
 //! - Standard VRL library functions (`vrl::stdlib::all`)
 //! - Vector-specific functions (`vector_vrl::secret_functions`)
 //! - Enrichment table functions (`enrichment::vrl_functions`)
+//! - Caver OCSF/parser/threat-intel functions (`vector_vrl_caver_stdlib::all`)
 //! - DNS tap parsing functions (optional, with `dnstap` feature)
 
 #![deny(warnings)]
@@ -51,7 +52,11 @@ pub fn all_without_vrl_stdlib() -> Vec<Box<dyn Function>> {
 fn iter_all_without_vrl_stdlib() -> impl Iterator<Item = Box<dyn Function>> {
     let functions = secret_functions()
         .into_iter()
-        .chain(enrichment::vrl_functions());
+        .chain(enrichment::vrl_functions())
+        // Caver OCSF/parser/threat-intel functions (caver-collector#904) —
+        // default-on: the OCSF VRL framework ships in the lean default
+        // binary (caver-collector#890), vendor normalizer apps do not.
+        .chain(vector_vrl_caver_stdlib::all());
 
     #[cfg(feature = "dnstap")]
     let functions = functions.chain(dnstap_parser::vrl_functions());
@@ -60,4 +65,37 @@ fn iter_all_without_vrl_stdlib() -> impl Iterator<Item = Box<dyn Function>> {
     let functions = functions.chain(vector_vrl_metrics::all());
 
     functions
+}
+
+#[cfg(test)]
+mod tests {
+    /// The Caver OCSF VRL framework must be reachable from every consumer of
+    /// `all()` — remap, conditions, `vector vrl` (caver-collector#904).
+    #[test]
+    fn caver_functions_are_registered() {
+        let functions = super::all();
+        for identifier in ["ocsf_classify", "ocsf_normalize", "parse_suricata_eve"] {
+            assert!(
+                functions.iter().any(|f| f.identifier() == identifier),
+                "{identifier} missing from vector_vrl_functions::all()"
+            );
+        }
+    }
+
+    /// Registering two functions under one identifier would make resolution
+    /// ambiguous; catch it at the aggregation point, where every source of
+    /// functions is visible.
+    #[test]
+    fn no_duplicate_identifiers() {
+        let functions = super::all();
+        let mut identifiers: Vec<&str> = functions.iter().map(|f| f.identifier()).collect();
+        identifiers.sort_unstable();
+        let before = identifiers.len();
+        identifiers.dedup();
+        assert_eq!(
+            before,
+            identifiers.len(),
+            "duplicate VRL function identifiers"
+        );
+    }
 }

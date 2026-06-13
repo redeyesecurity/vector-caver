@@ -1,0 +1,15 @@
+{
+  "_vendor": "fortinet",
+  "logid": "0100032002",
+  "type": "event",
+  "subtype": "user",
+  "level": "alert",
+  "vd": "root",
+  "devname": "FGT60F-BRANCH",
+  "devid": "FGT60FTK20012345",
+  "action": "login",
+  "status": "failed",
+  "user": "admin",
+  "srcip": "198.51.100.23",
+  "msg": "Administrator admin login failed from ssh(198.51.100.23) because of invalid password"
+}

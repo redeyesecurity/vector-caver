@@ -1,0 +1,14 @@
+{
+  "zk_log": "dns",
+  "class_uid": 4003,
+  "severity_id": 1,
+  "zk_uid": "C4J4Th3PJpwUYZZ6gc",
+  "network_protocol": "udp",
+  "src_ip": "10.0.0.22",
+  "dst_ip": "10.0.0.1",
+  "src_port": 53533,
+  "dst_port": 53,
+  "dns.query": "beacon.evil.example.com",
+  "dns.query_type": "A",
+  "dns.response_code": "NXDOMAIN"
+}

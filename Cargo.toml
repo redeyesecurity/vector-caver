@@ -124,6 +124,7 @@ members = [
   "lib/vector-tap",
   "lib/vector-top",
   "lib/vector-vrl/category",
+  "lib/vector-vrl/caver-stdlib",
   "lib/vector-vrl/cli",
   "lib/vector-vrl/dnstap-parser",
   "lib/vector-vrl/doc-builder",

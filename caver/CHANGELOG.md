@@ -1,5 +1,211 @@
 # Changelog
 
+## [0.15.2] - 2026-06-13
+
+### Fixed
+- **`parse_winevent` no longer panics on hostile input** (found in the #906
+  adversarial review): `extract_event_data()` sliced `name_end + 2` without
+  bounds/boundary checks → out-of-bounds panic on truncated `<Data Name="x"`
+  and a non-char-boundary panic on a multibyte char after the closing quote.
+  Now a bounded slice + `strip_prefix('>')`. Now that the OCSF VRL functions
+  are default-registered (#904), this was reachable from any `remap` calling
+  `parse_winevent(.message)` on raw logs — a VRL function must never panic.
+- **`is_internal_ip` no longer panics on malformed IPv6**: `parse_ipv6()`
+  underflowed `8 - left.len() - right.len()` (usize) on too many groups around
+  `::`. Guarded with an early `return None`. Regression tests added for both.
+
+## [0.15.1] - 2026-06-12
+
+### Added
+- **Shipped lean-collector reference pipeline**
+  (`config/examples/caver_lean_collector.yaml`, caver-collector#906 item 3):
+  the out-of-the-box base-normalize remap — vendor parse → `ocsf_classify` →
+  `ocsf_normalize` merged to the event root (so `class_uid`/`class_name`
+  land as real lake columns) → staging contract fields
+  (host/source/sourcetype; the sink aliases `timestamp`→`_time`,
+  `message`→`_raw` and defaults `index`→`main`) → `caver_entity_id` +
+  `is_internal_ip` enrichment → `caver_parquet`. Documents the
+  no-parser-yet fallback: events ship with `class_uid` 0 (unclassified) and
+  stay fully queryable by index/source/sourcetype/host/`_time`.
+
+## [0.15.0] - 2026-06-12
+
+### Added
+- **The OCSF VRL framework is wired into the vector binary**
+  (caver-collector#904, under EPIC caver-collector#890): `vrl-caver-stdlib`
+  was previously referenced nowhere in the root workspace, so the shipped
+  binary could not call any `ocsf_*` function from a `remap` transform.
+  A new root-workspace adapter crate `vector-vrl-caver-stdlib`
+  (`lib/vector-vrl/caver-stdlib`) wraps the pure serde_json domain crate in
+  `vrl::compiler::Function` impls and registers them — default-on, no
+  feature gate — at the single aggregation point
+  `vector_vrl_functions::all()`, covering `remap`, VRL conditions, and the
+  `vector vrl` REPL. Functions: `ocsf_classify`, `ocsf_normalize`,
+  `parse_suricata_eve`, `parse_zeek`, `parse_winevent`, `parse_sysmon`,
+  `caver_entity_id`, `redact_pii`, `is_internal_ip`,
+  `attack_tactic_lookup`. The crate's interface-only stubs
+  (`attack_technique_match`, `cve_enrich`, `threat_indicator_match`,
+  `geoip_caver`, `asn_lookup`, `hash_imphash`, `dns_resolve_cached`) are
+  deliberately NOT registered until their backends land. VRL → JSON
+  conversion is total (non-UTF-8 bytes lossy, timestamps RFC 3339) so the
+  functions are infallible — parse failures return `{"error": ...}` objects
+  instead of failing the program, mirroring the Python transform chain.
+  `vrl-caver-stdlib` now declares explicit `version`/`edition`/`license`
+  (the caver-sink-parquet root-path-dep pattern); no domain-crate code
+  changed. CI's vector-component job now validates a remap config calling
+  the ocsf functions and runs the adapter-crate tests.
+
+## [0.14.0] - 2026-06-12
+
+### Added
+- **Timer-flush freshness backstop** (caver-collector#901, parity with
+  the Python sink's caver-collector#888): the crate previously flushed
+  only when the buffer reached `batch_size` (plus the shutdown drain),
+  so a below-batch buffer from a low-rate source sat unshipped — and
+  unprotected against a crash — indefinitely. `ParquetSink` now runs a
+  named flusher thread (`caver-parquet-flush`) started by the Vector
+  sink's `run()`:
+  - **`flush_seconds`** (default 30): timer tick
+  - **`flush_max_age_seconds`** (default 300): a below-`batch_size`
+    buffer ships once its oldest event is at least this old; `0` drains
+    every tick. Worst-case latency / crash-loss window ≈ this value plus
+    up to one `flush_seconds` tick (age is only checked on ticks)
+  - the thread holds only a `Weak` and stops via condvar
+    (`stop_flusher()`, also joined on `Drop`); it never drains on stop —
+    shutdown paths call `flush()` explicitly, which always ships
+    regardless of the floor. `stop_flusher()` detaches instead of
+    joining when the final `Arc` drop happens on the flusher thread
+    itself (it holds a strong `Arc` mid-tick; a self-join would panic
+    inside `Drop` — caught in PR #22 review, regression-tested)
+  - `stats()` gains `timer_skips` (ticks that found a buffer too young)
+  - the Vector sink rejects `flush_seconds = 0` at config build time
+    (it is the tick that applies the backstop, not a disable switch);
+    the crate clamps `0` to `1`
+  - migration note: no separate `min_rows` knob — the timer-path floor
+    is `batch_size`; Python `min_rows: 0` maps to
+    `flush_max_age_seconds: 0`
+
+## [0.13.0] - 2026-06-12
+
+### Added
+- **Real sink healthcheck** (caver-collector#898): the `caver_parquet`
+  healthcheck now issues a signed `HEAD` on the bucket
+  (`S3Transport::head_bucket`, run on the blocking pool) instead of
+  `future::ok(())` — boot and `vector validate` catch wrong credentials
+  (403 hint), missing buckets (404 hint), and wrong-region redirects
+  before events flow
+- **`put_deadline_ms`** (default 45000): total wall-clock budget for one
+  PUT *including* every retry and backoff sleep. Bounds the final
+  shutdown flush — with the retry defaults the unbounded worst case was
+  ~121s, longer than vector's `graceful_shutdown_limit_secs` default of
+  60s, so an already-acknowledged final batch could be force-killed
+  mid-retry and lost without reaching the DLQ. The per-request timeout
+  shrinks to the remaining budget; exhaustion routes the batch to the DLQ
+  with `put_deadline_ms=<n> exhausted` appended to the error
+- **DLQ reason sidecar**: each `dlq-*.ndjson` now gets a same-stem
+  `.reason` file recording why the batch landed there (`put: …` /
+  `serialize: …`), so triage doesn't have to correlate timestamps with
+  collector logs; the ndjson stays pure rows for replay tooling
+
+### Fixed
+- **Native-layout partition values are key-charset sanitized**
+  (carried from the vector-caver#20 review): `sensor_id` is sanitized in
+  `ParquetSink::new` (fallback `collector`) and the event-derived
+  `class_uid` in the Native key path falls back to `0000` when key-unsafe
+  — a `/` or `..` there broke the SigV4 canonical path and 403'd (→ DLQ)
+  the whole batch
+
+### Changed
+- arrow/parquet 55 → 56, sharing the root vector workspace's copy
+  (codecs are already on 56) instead of dragging a second full arrow
+  stack into the build
+- CI: protoc is now a pinned 25.3 release download instead of
+  `brew install protobuf`; the expensive vector-component job is
+  path-filtered (docs-only changes skip it, safe default = run); the
+  validate config sets `healthcheck.enabled = false` because its
+  endpoint is intentionally unreachable
+
+## [0.12.0] - 2026-06-12
+
+### Fixed
+- **caver_staging hardening follow-ups from the #896/#897 reviews**
+  (caver-collector#899):
+  - staging `_time` is now schema-aware and full-precision: the wrapper
+    captures the native `Value::Timestamp` BEFORE flattening (honoring
+    `log_schema.timestamp_key` and the Vector-namespace timestamp meaning)
+    and renders microseconds — previously the RFC 3339 flatten truncated
+    to milliseconds and only the literal `timestamp` key was recognized;
+    string timestamps still fall back to the flat-row alias parse
+  - default hostname (`HOSTNAME` env / `/etc/hostname`) is key-charset
+    sanitized before use as the staging `source` path segment; corrupted
+    hostnames (non-ASCII, slashes) fall back to `collector` instead of
+    producing malformed object keys
+  - `ParquetSink::new` now enforces the key contract for direct crate
+    consumers (sanitize-with-fallback): key-unsafe `source`/`sensor_id`
+    fall through the resolution chain, key-unsafe or
+    non-ASCII-alpha-leading `writer_name` falls back to `collector`, and a
+    `staging_prefix` with empty or key-unsafe segments falls back to
+    `uf/ocsf` — the Vector config layer still rejects these loudly at boot
+- DLQ docs: `caver_staging` DLQ rows are post-preparation (string-typed
+  `_time`, injected defaults) while `native` rows are the raw maps —
+  replay tooling must handle both shapes
+
+### Added
+- CI now runs the wrapper sink unit tests (`sinks::caver_parquet` in the
+  root vector workspace) in the vector-component job — previously only
+  build + registration + config-validate were exercised there
+- typed-column coverage for the remaining contract columns: `type_uid`
+  (Int64) and `metric_value` (Float64) round-trip + missing-value defaults
+
+## [0.11.0] - 2026-06-12
+
+### Fixed
+- **Contract-fidelity follow-ups from the #897 adversarial review**
+  (caver-collector#900) — eight divergences from the Python collector
+  transforms pinned byte-for-byte, each with a regression test:
+  - winevent: Security EventID table is now Security-channel-gated
+    (provider contains "security" OR channel is Security); other channels
+    classify coarse (1007, 1) like `_winevent_refine`
+  - winevent: EventID lookup is a truthiness or-chain (`EventID` 0 falls
+    through to `event_id`) with strict-int parse (float EventID → coarse)
+  - suricata: `event_type` gate is Python-truthiness (numeric 5 classifies,
+    0 does not); `suri_event_type` rendered via `str()` semantics
+  - classify passthrough: a pre-set truthy `class_uid` is a no-op;
+    `class_uid: 0` does NOT suppress classification
+  - fortinet: severity lookups are truthiness chains — `crseverity: 0`
+    falls through to `severity` (no more High → default downgrade)
+  - zeek files: `total_bytes`-or-`size` chain matches Python (`size: 0`
+    still emits `file.size: 0`)
+  - `value_to_string` renders like Python `str()`: `True`/`False`/`None`,
+    containers via repr punctuation (`[1, 'a']`, `{'k': 'v'}`)
+  - `parse_ymd_hms`/`parse_clf` clamp the year to 1970..=9999 so a forged
+    timestamp can't spin `days_from_epoch` ~10^10 iterations
+- `normalise_zeek_json` no longer fabricates `src_ip: ""`/`src_port: 0` —
+  connection-tuple keys are omitted when absent from the input
+- golden tests: hand-listed per-fixture snapshot tests replaced by a
+  directory-derived suite (new fixtures are covered automatically)
+
+## [0.10.0] - 2026-06-12
+
+### Added
+- **Vendor classify/normalize registry mirroring the Python collector
+  transforms** (caver-collector#897): `ocsf::normalize()` now routes on a
+  `_vendor` tag and ports the exact contract of the caver-collector Python
+  `transforms/` for suricata, zeek, palo_alto, and fortinet (flat OCSF
+  output: class/severity/type_uid tables, truthiness gates, raw-passthrough
+  port semantics, `or`-chain field fallbacks)
+  - Parsers (`parse_suricata_eve`, `normalise_zeek_json`, `parse_zeek_tsv`,
+    `parse_winevent`, `parse_sysmon`) stamp `_vendor` so parsed events route
+    without a separate hint; the tag is dropped from normalized output
+  - `classify()` covers the full `ocsf_classify.py` tables: sysmon EventID →
+    class map, Windows Security EventID map, okta, nginx, suricata, zeek
+    (path/stream + content heuristics), PAN-OS and FortiGate type detection
+  - winevent and non-EID-1 sysmon events pass through with classification
+    only, matching the Python collector (no normalizer exists upstream)
+  - Golden fixtures are now vendor-keyed (`<vendor>_<scenario>/`); the 7 new
+    fixture snapshots were **generated by the Python transforms themselves**,
+    so the suite proves Rust↔Python contract parity by construction
+
 ## [0.9.0] - 2026-06-12
 
 ### Added

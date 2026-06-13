@@ -71,6 +71,8 @@ mod tests {
                 ("sourcetype".into(), "demo:json".into()),
                 ("_raw".into(), "hello".into()),
                 ("severity_id".into(), "3.9".into()),
+                ("type_uid".into(), "400201".into()),
+                ("metric_value".into(), "99.5".into()),
             ]),
             HashMap::from([
                 ("_time".into(), "not-a-number".into()),
@@ -125,6 +127,20 @@ mod tests {
         let sevs = sevs.as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(sevs.value(0), 3, "int(float(v)) truncation");
         assert_eq!(sevs.value(1), 0, "missing int -> 0");
+
+        // The remaining typed contract columns share severity_id/_time's code
+        // path but were never exercised (caver-collector#899 item 4).
+        assert_eq!(f("type_uid"), DataType::Int64);
+        let tuids = col("type_uid");
+        let tuids = tuids.as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(tuids.value(0), 400201);
+        assert_eq!(tuids.value(1), 0, "missing int -> 0");
+
+        assert_eq!(f("metric_value"), DataType::Float64);
+        let metrics = col("metric_value");
+        let metrics = metrics.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(metrics.value(0), 99.5);
+        assert_eq!(metrics.value(1), 0.0, "missing float -> 0.0");
 
         let extra = col("extra_field");
         let extra = extra.as_any().downcast_ref::<StringArray>().unwrap();

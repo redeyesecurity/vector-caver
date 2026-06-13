@@ -1,0 +1,26 @@
+{
+  "_vendor": "suricata",
+  "timestamp": "2026-05-28T10:00:00.000000+0000",
+  "flow_id": 1234567890123456,
+  "in_iface": "eth0",
+  "event_type": "alert",
+  "src_ip": "10.0.0.15",
+  "src_port": 54321,
+  "dest_ip": "203.0.113.99",
+  "dest_port": 443,
+  "proto": "TCP",
+  "app_proto": "tls",
+  "alert": {
+    "action": "allowed",
+    "gid": 1,
+    "signature_id": 2027863,
+    "rev": 4,
+    "signature": "ET MALWARE Observed Malicious SSL Cert (Cobalt Strike)",
+    "category": "Malware Command and Control Activity Detected",
+    "severity": 1
+  },
+  "tls": {
+    "sni": "evil-c2.example.net",
+    "version": "TLS 1.2"
+  }
+}
