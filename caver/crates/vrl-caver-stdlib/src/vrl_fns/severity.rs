@@ -53,6 +53,7 @@ impl FunctionExpression for OcsfSeverityFn {
     }
 
     fn type_def(&self, _state: &TypeState) -> TypeDef {
-        TypeDef::object(Collection::any()).infallible()
+        // fallible: resolve() uses `try_bytes_utf8_lossy()?`, which errors on non-bytes args.
+        TypeDef::object(Collection::any()).fallible()
     }
 }

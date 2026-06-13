@@ -51,6 +51,7 @@ impl FunctionExpression for AsnLookupFn {
     }
 
     fn type_def(&self, _state: &TypeState) -> TypeDef {
-        TypeDef::object(Collection::any()).add_null().infallible()
+        // fallible: resolve() uses `try_bytes_utf8_lossy()?`, which errors on non-bytes args.
+        TypeDef::object(Collection::any()).add_null().fallible()
     }
 }

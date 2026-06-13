@@ -120,6 +120,11 @@ fn parse_ipv6(s: &str) -> Option<[u16; 8]> {
         } else {
             halves[1].split(':').collect()
         };
+        // Guard against usize underflow / out-of-bounds on malformed input
+        // (e.g. too many groups around `::`); reject rather than panic.
+        if left.len() + right.len() > 8 {
+            return None;
+        }
         let zeros = 8 - left.len() - right.len();
         let mut out = [0u16; 8];
         for (i, p) in left.iter().enumerate() {
@@ -348,6 +353,22 @@ mod tests {
         assert!(is_internal_ip("172.16.0.1"));
         assert!(is_internal_ip("172.31.255.255"));
         assert!(is_internal_ip("192.168.1.100"));
+    }
+
+    #[test]
+    fn malformed_ipv6_does_not_panic() {
+        // Regression (#906 review): parse_ipv6 underflowed `8 - left - right` and could
+        // index out of bounds on too many groups around `::`. Must return cleanly, not panic.
+        for bad in [
+            "1:2:3:4:5:6:7:8:9::10", // left + right > 8
+            "::1:2:3:4:5:6:7:8:9",
+            "a:b:c:d:e:f:0:1::2",
+            ":::",
+            "gggg::",
+            "",
+        ] {
+            let _ = is_internal_ip(bad); // just must not panic
+        }
     }
 
     #[test]

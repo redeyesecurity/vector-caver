@@ -309,7 +309,11 @@ fn extract_event_data(xml: &str) -> serde_json::Map<String, Value> {
             None => break,
         };
         let name = rest[..name_end].to_string();
-        rest = &rest[name_end + 2..]; // skip past `">`
+        // name_end indexes the closing ASCII '"' (so name_end + 1 is a char boundary <= len);
+        // optionally strip the following '>'. Avoids out-of-bounds / mid-codepoint panics on
+        // truncated or hostile input (e.g. `<Data Name="x"` or a multibyte char after the quote).
+        let after = &rest[name_end + 1..];
+        rest = after.strip_prefix('>').unwrap_or(after);
         let val_end = match rest.find("</Data>") {
             Some(p) => p,
             None => break,
@@ -675,6 +679,22 @@ pub fn dns_resolve_cached(_name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn winevent_hostile_input_does_not_panic() {
+        // Regression (#906 review): extract_event_data() sliced `name_end + 2` without
+        // bounds/boundary checks → out-of-bounds panic on truncated input and mid-codepoint
+        // panic on a multibyte char after the closing quote. Must parse cleanly, never panic.
+        for raw in [
+            r#"<Data Name="x""#,                  // truncated: no `">` after the quote
+            "<Data Name=\"x\"\u{20ac}rest</Data>", // multibyte char immediately after the quote
+            r#"<Data Name=""#,                     // no closing quote
+            "<Data Name=\"a\">v</Data>",           // well-formed control case
+            "",
+        ] {
+            let _ = parse_winevent(raw); // just must not panic
+        }
+    }
 
     #[test]
     fn suricata_alert_parse() {
