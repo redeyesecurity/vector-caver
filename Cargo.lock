@@ -13713,6 +13713,7 @@ dependencies = [
  "vector-vrl-category",
  "vector-vrl-metrics",
  "vrl",
+ "vrl-caver-stdlib",
 ]
 
 [[package]]
@@ -13883,6 +13884,14 @@ dependencies = [
  "woothee",
  "xxhash-rust",
  "zstd 0.13.2",
+]
+
+[[package]]
+name = "vrl-caver-stdlib"
+version = "0.9.0"
+dependencies = [
+ "serde_json",
+ "vrl",
 ]
 
 [[package]]

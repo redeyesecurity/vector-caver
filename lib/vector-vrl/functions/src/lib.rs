@@ -59,5 +59,8 @@ fn iter_all_without_vrl_stdlib() -> impl Iterator<Item = Box<dyn Function>> {
     #[cfg(feature = "vrl-metrics")]
     let functions = functions.chain(vector_vrl_metrics::all());
 
+    #[cfg(feature = "caver")]
+    let functions = functions.chain(vrl_caver_stdlib::vrl_functions());
+
     functions
 }

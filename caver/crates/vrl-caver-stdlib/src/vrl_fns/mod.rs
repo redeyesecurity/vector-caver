@@ -15,14 +15,50 @@
 use vrl::compiler::Function;
 use vrl::value::Value;
 
+mod asn_lookup;
+mod attack_tactic_lookup;
+mod attack_technique_match;
+mod classify;
+mod cve_enrich;
+mod dns_resolve_cached;
+mod entity_id;
+mod geoip_caver;
+mod hash_imphash;
+mod is_internal_ip;
 mod normalize;
+mod parse_suricata_eve;
+mod parse_sysmon;
+mod parse_winevent;
+mod parse_zeek;
+mod redact_pii;
+mod severity;
+mod threat_indicator_match;
 
 /// All VRL functions exported by `vrl-caver-stdlib`.
 ///
 /// The Integrate phase appends one `Box::new(...)` per binding. Keep this list
 /// the single registration point.
 pub fn vrl_functions() -> Vec<Box<dyn Function>> {
-    vec![Box::new(normalize::OcsfNormalize) as _]
+    vec![
+        Box::new(normalize::OcsfNormalize) as _,
+        Box::new(classify::OcsfClassify) as _,
+        Box::new(severity::OcsfSeverity) as _,
+        Box::new(parse_suricata_eve::ParseSuricataEve) as _,
+        Box::new(parse_zeek::ParseZeek) as _,
+        Box::new(parse_winevent::ParseWinevent) as _,
+        Box::new(parse_sysmon::ParseSysmon) as _,
+        Box::new(entity_id::EntityId) as _,
+        Box::new(redact_pii::RedactPii) as _,
+        Box::new(hash_imphash::HashImphash) as _,
+        Box::new(dns_resolve_cached::DnsResolveCached) as _,
+        Box::new(is_internal_ip::IsInternalIp) as _,
+        Box::new(attack_tactic_lookup::AttackTacticLookup) as _,
+        Box::new(attack_technique_match::AttackTechniqueMatch) as _,
+        Box::new(cve_enrich::CveEnrich) as _,
+        Box::new(threat_indicator_match::ThreatIndicatorMatch) as _,
+        Box::new(geoip_caver::GeoipCaver) as _,
+        Box::new(asn_lookup::AsnLookup) as _,
+    ]
 }
 
 // ---------------------------------------------------------------------------

@@ -12,9 +12,11 @@ vrl.workspace = true
 enrichment = { path = "../enrichment" }
 dnstap-parser = { path = "../dnstap-parser", optional = true }
 vector-vrl-metrics = { path = "../metrics", optional = true }
+vrl-caver-stdlib = { path = "../../../caver/crates/vrl-caver-stdlib", optional = true }
 vector-vrl-category.workspace = true
 
 [features]
 default = ["dnstap", "vrl-metrics"]
 dnstap = ["dep:dnstap-parser"]
 vrl-metrics = ["dep:vector-vrl-metrics"]
+caver = ["dep:vrl-caver-stdlib"]

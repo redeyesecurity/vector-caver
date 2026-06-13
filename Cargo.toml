@@ -561,6 +561,12 @@ default-no-api-client = ["base", "sources-dnstap", "unix", "vendored"]
 
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
+# Enables the Caver OCSF/security VRL stdlib extensions (OCSF normalization,
+# ATT&CK/CVE enrichment, security log parsers). Propagated to the
+# vector-vrl-functions crate's `caver` feature, mirroring how `sources-dnstap`
+# turns on `vector-vrl-functions/dnstap`.
+caver = ["vector-vrl-functions/caver"]
+
 # VRL functions control features
 vrl-functions-env = ["vrl/enable_env_functions"]
 vrl-functions-system = ["vrl/enable_system_functions"]
