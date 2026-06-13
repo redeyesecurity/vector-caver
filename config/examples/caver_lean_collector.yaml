@@ -38,18 +38,22 @@ transforms:
       if class != 0 {
         # Merge OCSF attributes to the event root so class_uid/class_name
         # land as real lake columns (nesting would flatten to "ocsf.*").
-        . = merge(., object!(ocsf_normalize(ev))) ?? .
+        # ocsf_normalize is infallible and typed object, so this can't fail.
+        . = merge(., ocsf_normalize(ev))
       }
 
       # 3. Caver staging contract fields. The sink aliases
       #    timestamp -> _time and message -> _raw, and defaults
-      #    index -> "main"; set host/source/sourcetype explicitly.
+      #    index -> "main"; set source/sourcetype explicitly. Most sources
+      #    (file, exec, ...) set .host themselves; get_hostname() is NOT
+      #    available in the lean binary (vrl stdlib-base), so fall back to
+      #    a static name if yours does not.
       .source = "suricata_fw1"
       .sourcetype = "suricata:eve"
-      if !exists(.host) { .host = get_hostname() ?? "collector" }
+      if !exists(.host) { .host = "suricata_fw1" }
 
       # 4. Stable cross-collector entity identity + cheap enrichment.
-      .entity = caver_entity_id({"hostname": .host}, "host")
+      .entity = caver_entity_id({"hostname": to_string(.host) ?? "collector"}, "host")
       if is_string(ev.src_ip) { .src_internal = is_internal_ip(string!(ev.src_ip)) }
 
 sinks:
