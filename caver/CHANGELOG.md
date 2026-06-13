@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.1] - 2026-06-12
+
+### Added
+- **Shipped lean-collector reference pipeline**
+  (`config/examples/caver_lean_collector.yaml`, caver-collector#906 item 3):
+  the out-of-the-box base-normalize remap — vendor parse → `ocsf_classify` →
+  `ocsf_normalize` merged to the event root (so `class_uid`/`class_name`
+  land as real lake columns) → staging contract fields
+  (host/source/sourcetype; the sink aliases `timestamp`→`_time`,
+  `message`→`_raw` and defaults `index`→`main`) → `caver_entity_id` +
+  `is_internal_ip` enrichment → `caver_parquet`. Documents the
+  no-parser-yet fallback: events ship with `class_uid` 0 (unclassified) and
+  stay fully queryable by index/source/sourcetype/host/`_time`.
+
 ## [0.15.0] - 2026-06-12
 
 ### Added

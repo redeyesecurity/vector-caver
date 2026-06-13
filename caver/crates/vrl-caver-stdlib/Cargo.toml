@@ -6,7 +6,7 @@ description = "VRL stdlib extensions: OCSF normalization, ATT&CK/CVE enrichment,
 # and cargo resolves inheritance against root there — same pattern as
 # caver-sink-parquet. Keep version in lockstep with caver/Cargo.toml
 # workspace.package.
-version = "0.15.0"
+version = "0.15.1"
 edition = "2021"
 license = "MPL-2.0"
 

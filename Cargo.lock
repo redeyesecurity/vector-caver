@@ -2436,7 +2436,7 @@ dependencies = [
 
 [[package]]
 name = "caver-sink-parquet"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "arrow 56.2.0",
  "bytes",
@@ -13676,7 +13676,7 @@ dependencies = [
 
 [[package]]
 name = "vrl-caver-stdlib"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "serde_json",
 ]
