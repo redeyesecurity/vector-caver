@@ -1,0 +1,70 @@
+# Lean Caver collector: the out-of-the-box queryable pipeline
+# (caver-collector#906, framework wired default-on by caver-collector#904).
+#
+#   raw vendor log -> base-normalize remap (OCSF VRL framework) -> caver_parquet -> lake
+#
+# The OCSF *framework* — parse_suricata_eve / parse_zeek / parse_winevent /
+# parse_sysmon, ocsf_classify, ocsf_normalize, caver_entity_id, redact_pii,
+# is_internal_ip, attack_tactic_lookup — ships in the default lean binary; no
+# feature flag, no app install. Per-vendor normalizer apps (deployment-server
+# content) layer richer mappings on top of this baseline.
+#
+# Shown with Suricata EVE because the framework carries a full parse ->
+# classify -> normalize chain for it. For a source with no parser yet, keep
+# steps 3–4 only: events ship with class_uid 0 (unclassified) and are still
+# fully queryable by index/source/sourcetype/host/_time.
+
+data_dir: /var/lib/vector
+
+sources:
+  eve:
+    type: file
+    include: ["/var/log/suricata/eve.json"]
+
+transforms:
+  base_normalize:
+    type: remap
+    inputs: ["eve"]
+    drop_on_abort: true
+    source: |
+      # 1. Parse the vendor format. Caver parsers tag the result with
+      #    `_vendor`; they are infallible — bad input yields an
+      #    {"error": ...} object, never a failed program.
+      ev = parse_suricata_eve(string!(.message))
+
+      # 2. Classify, then normalize into OCSF. Unclassifiable events keep
+      #    class_uid 0 and ship raw — the pipeline never drops on them.
+      class = ocsf_classify(ev)
+      if class != 0 {
+        # Merge OCSF attributes to the event root so class_uid/class_name
+        # land as real lake columns (nesting would flatten to "ocsf.*").
+        # ocsf_normalize is infallible and typed object, so this can't fail.
+        . = merge(., ocsf_normalize(ev))
+      }
+
+      # 3. Caver staging contract fields. The sink aliases
+      #    timestamp -> _time and message -> _raw, and defaults
+      #    index -> "main"; set source/sourcetype explicitly. Most sources
+      #    (file, exec, ...) set .host themselves; get_hostname() is NOT
+      #    available in the lean binary (vrl stdlib-base), so fall back to
+      #    a static name if yours does not.
+      .source = "suricata_fw1"
+      .sourcetype = "suricata:eve"
+      if !exists(.host) { .host = "suricata_fw1" }
+
+      # 4. Stable cross-collector entity identity + cheap enrichment.
+      .entity = caver_entity_id({"hostname": to_string(.host) ?? "collector"}, "host")
+      if is_string(ev.src_ip) { .src_internal = is_internal_ip(string!(ev.src_ip)) }
+
+sinks:
+  lake:
+    type: caver_parquet
+    inputs: ["base_normalize"]
+    bucket: "splunk-events"
+    sensor_id: "suricata_fw1"
+    source: "suricata_fw1"
+    endpoint: "http://minio.internal.example:9000"
+    region: "us-east-1"
+    # Credentials by env-var NAME, never inline.
+    access_key_env: "LAKE_ACCESS_KEY"
+    secret_key_env: "LAKE_SECRET_KEY"
