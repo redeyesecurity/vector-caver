@@ -2436,7 +2436,7 @@ dependencies = [
 
 [[package]]
 name = "caver-sink-parquet"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "arrow 56.2.0",
  "bytes",
@@ -13462,6 +13462,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vector-vrl-caver-stdlib"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "vrl",
+ "vrl-caver-stdlib",
+]
+
+[[package]]
 name = "vector-vrl-cli"
 version = "0.1.0"
 dependencies = [
@@ -13489,6 +13499,7 @@ dependencies = [
  "enrichment",
  "indoc",
  "vector-vrl-category",
+ "vector-vrl-caver-stdlib",
  "vector-vrl-metrics",
  "vrl",
 ]
@@ -13661,6 +13672,13 @@ dependencies = [
  "woothee",
  "xxhash-rust",
  "zstd 0.13.2",
+]
+
+[[package]]
+name = "vrl-caver-stdlib"
+version = "0.15.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.0] - 2026-06-12
+
+### Added
+- **The OCSF VRL framework is wired into the vector binary**
+  (caver-collector#904, under EPIC caver-collector#890): `vrl-caver-stdlib`
+  was previously referenced nowhere in the root workspace, so the shipped
+  binary could not call any `ocsf_*` function from a `remap` transform.
+  A new root-workspace adapter crate `vector-vrl-caver-stdlib`
+  (`lib/vector-vrl/caver-stdlib`) wraps the pure serde_json domain crate in
+  `vrl::compiler::Function` impls and registers them — default-on, no
+  feature gate — at the single aggregation point
+  `vector_vrl_functions::all()`, covering `remap`, VRL conditions, and the
+  `vector vrl` REPL. Functions: `ocsf_classify`, `ocsf_normalize`,
+  `parse_suricata_eve`, `parse_zeek`, `parse_winevent`, `parse_sysmon`,
+  `caver_entity_id`, `redact_pii`, `is_internal_ip`,
+  `attack_tactic_lookup`. The crate's interface-only stubs
+  (`attack_technique_match`, `cve_enrich`, `threat_indicator_match`,
+  `geoip_caver`, `asn_lookup`, `hash_imphash`, `dns_resolve_cached`) are
+  deliberately NOT registered until their backends land. VRL → JSON
+  conversion is total (non-UTF-8 bytes lossy, timestamps RFC 3339) so the
+  functions are infallible — parse failures return `{"error": ...}` objects
+  instead of failing the program, mirroring the Python transform chain.
+  `vrl-caver-stdlib` now declares explicit `version`/`edition`/`license`
+  (the caver-sink-parquet root-path-dep pattern); no domain-crate code
+  changed. CI's vector-component job now validates a remap config calling
+  the ocsf functions and runs the adapter-crate tests.
+
 ## [0.14.0] - 2026-06-12
 
 ### Added
