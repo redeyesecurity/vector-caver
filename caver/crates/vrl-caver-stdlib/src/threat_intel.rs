@@ -120,6 +120,11 @@ fn parse_ipv6(s: &str) -> Option<[u16; 8]> {
         } else {
             halves[1].split(':').collect()
         };
+        // Guard against usize underflow / out-of-bounds on malformed input
+        // (e.g. too many groups around `::`); reject rather than panic.
+        if left.len() + right.len() > 8 {
+            return None;
+        }
         let zeros = 8 - left.len() - right.len();
         let mut out = [0u16; 8];
         for (i, p) in left.iter().enumerate() {
@@ -341,6 +346,22 @@ pub fn asn_lookup(_ip: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_ipv6_does_not_panic() {
+        // Regression: parse_ipv6 underflowed `8 - left - right` and could index out of
+        // bounds on too many groups around `::`. Must return cleanly, never panic.
+        for bad in [
+            "1:2:3:4:5:6:7:8:9::10",
+            "::1:2:3:4:5:6:7:8:9",
+            "a:b:c:d:e:f:0:1::2",
+            ":::",
+            "gggg::",
+            "",
+        ] {
+            let _ = is_internal_ip(bad);
+        }
+    }
 
     #[test]
     fn internal_rfc1918() {
