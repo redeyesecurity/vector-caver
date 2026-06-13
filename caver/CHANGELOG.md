@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.2] - 2026-06-13
+
+### Fixed
+- **`parse_winevent` no longer panics on hostile input** (found in the #906
+  adversarial review): `extract_event_data()` sliced `name_end + 2` without
+  bounds/boundary checks → out-of-bounds panic on truncated `<Data Name="x"`
+  and a non-char-boundary panic on a multibyte char after the closing quote.
+  Now a bounded slice + `strip_prefix('>')`. Now that the OCSF VRL functions
+  are default-registered (#904), this was reachable from any `remap` calling
+  `parse_winevent(.message)` on raw logs — a VRL function must never panic.
+- **`is_internal_ip` no longer panics on malformed IPv6**: `parse_ipv6()`
+  underflowed `8 - left.len() - right.len()` (usize) on too many groups around
+  `::`. Guarded with an early `return None`. Regression tests added for both.
+
 ## [0.15.1] - 2026-06-12
 
 ### Added
