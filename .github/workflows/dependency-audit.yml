@@ -1,0 +1,135 @@
+name: Dependency audit
+
+# Audits every crate version change in a PR before it can merge.
+#
+# Added after the 2026-08-04 keyv/cacheable npm compromise. That campaign was
+# npm, but the mechanism is ecosystem-agnostic: a compromised maintainer account
+# publishes a version whose install step runs attacker code. In cargo that step
+# is build.rs, which compiles and runs before your crate does. The malicious npm
+# versions also carried valid sigstore provenance, so signature checks passed
+# them, which is why this looks at what changed inside the artifact instead.
+#
+# Policy: block on CRITICAL, warn on HIGH.
+#   CRITICAL = a build.rs the previous version did not have.
+#   HIGH     = new root executables, large or obfuscated new files, credential
+#              and IMDS strings, publisher changes. These fire on legitimate
+#              changes too, so they warn rather than block.
+#
+# Tool: https://github.com/redeyesecurity/upgrade-audit
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch the auditor
+        run: |
+          curl -sSfL -o upgrade-audit.py \
+            https://raw.githubusercontent.com/redeyesecurity/upgrade-audit/main/upgrade-audit.py
+
+      - name: Work out which versions changed
+        id: diff
+        run: |
+          python3 - <<'PY' > changed.txt
+          import re, subprocess, os, sys
+
+          BASE = "origin/" + os.environ["BASE_REF"]
+
+          def at(ref):
+              try:
+                  return subprocess.run(["git", "show", f"{ref}:Cargo.lock"],
+                                        capture_output=True, text=True, check=True).stdout
+              except subprocess.CalledProcessError:
+                  return ""
+
+          def pairs(text):
+              """{(name, version)} from [[package]] blocks.
+
+              Parsed by hand so the workflow needs no toml library. Kept as
+              name+version pairs rather than a name->version map on purpose: a
+              Cargo.lock legitimately carries the same crate at several versions
+              at once, and a map silently collapses those to whichever came last.
+              """
+              out, name, ver = set(), None, None
+              for line in text.splitlines():
+                  s = line.strip()
+                  if s == "[[package]]":
+                      name = ver = None
+                      continue
+                  m = re.match(r'^name\s*=\s*"([^"]+)"', s)
+                  if m:
+                      name = m.group(1)
+                  m = re.match(r'^version\s*=\s*"([^"]+)"', s)
+                  if m:
+                      ver = m.group(1)
+                  if name and ver:
+                      out.add((name, ver))
+                      name = ver = None
+              return out
+
+          base_text = at(BASE)
+          if not base_text.strip():
+              # No lockfile on the base branch means every crate looks new, and
+              # auditing a whole dependency tree is thousands of downloads. Say
+              # why nothing was audited rather than appearing to pass.
+              print("::warning::No Cargo.lock on the base branch, nothing to diff against",
+                    file=sys.stderr)
+              raise SystemExit(0)
+
+          def vkey(v):
+              """Sort versions numerically. Lexically, 9.0.0 beats 10.0.0."""
+              return [int(p) if p.isdigit() else p
+                      for p in re.split(r"[.\-+]", v)]
+
+          base, head = pairs(base_text), pairs(at("HEAD"))
+
+          for name, new in sorted(head - base):
+              # A brand-new dependency has no previous version to diff against,
+              # so it is audited as all-new. Intentional: a new dependency
+              # deserves more scrutiny than a bump, not less.
+              olds = [v for n, v in base if n == name]
+              try:
+                  prev = max(olds, key=vkey) if olds else new
+              except TypeError:          # mixed int/str parts in a prerelease
+                  prev = sorted(olds)[-1] if olds else new
+              print(f"{name} {prev} {new}")
+          PY
+          echo "count=$(wc -l < changed.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "Crate changes in this PR:"; cat changed.txt
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+      - name: Audit the changes
+        if: steps.diff.outputs.count != '0'
+        run: |
+          set +e
+          python3 upgrade-audit.py cargo --batch changed.txt --cooldown 3 --fail-on CRITICAL | tee audit.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if grep -q '\[HIGH\]' audit.txt; then
+            echo "::warning::Dependency audit raised HIGH findings. Review before merging."
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Dependency audit found a CRITICAL change (a new build.rs). Blocking."
+            exit 1
+          fi
+
+      - name: No dependency changes
+        if: steps.diff.outputs.count == '0'
+        run: echo "No crate version changes in this PR."
