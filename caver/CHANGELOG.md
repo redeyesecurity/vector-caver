@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.16.0] - 2026-09-17
+
+### Added
+- **`caver_http_pull` is a registered Vector source** (caver-collector#1842):
+  a stateful HTTP pull that stock `http_client` cannot be. The root vector
+  binary wires it in behind the `sources-caver_http_pull` feature (in the
+  `sources-logs` umbrella), and a new caver crate `caver-source-http-pull`
+  (`caver/crates/caver-source-http-pull`) holds the transport-free logic:
+  - **OAuth2 client-credentials** token fetch with refresh-before-expiry
+    (`oauth::TokenCache`): parses `access_token`/`expires_in` (number or
+    numeric string), computes an absolute expiry, and refreshes a configurable
+    skew ahead of it so an in-flight request cannot race expiry. The client
+    secret is read from an environment variable, never written in config; a
+    `401` clears the token so the next cycle re-fetches.
+  - **Cursor/checkpoint carried across polls** (`cursor::Cursor`): either a
+    `nextLink`-style absolute follow-URL located by a JSON pointer (Microsoft
+    Graph `@odata.nextLink`, generic `links.next`), walked up to `max_pages`
+    per poll, or a time-window `since` high-water mark sent as a query param
+    and advanced from a per-record timestamp field (numeric-aware so epoch `9`
+    < `10`, never moving backwards).
+  - **Response-array extraction** (`extract::extract_records`): an RFC 6901
+    JSON pointer locates the record array (`/value`, `/data/items`, or the
+    whole body); each record is decoded (JSON by default) into its own event.
+  - `src/sources/caver_http_pull/` is the Vector integration: the
+    `#[configurable_component]` config (endpoint, method, scrape interval, auth
+    as `oauth2`|`header`, pagination as `next_link`|`since`, records pointer,
+    decoding) plus the async poll loop that drives the crate logic with
+    Vector's own HTTP client and emits events. Native Rust throughout, no
+    Python adapter.
+  - `vector list` shows `caver_http_pull`; CI's vector-component job builds it,
+    asserts registration, and runs the wrapper unit tests.
+
 ## [0.15.2] - 2026-06-13
 
 ### Fixed

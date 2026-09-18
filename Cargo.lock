@@ -2454,6 +2454,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caver-source-http-pull"
+version = "0.16.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "thiserror 1.0.68",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12953,6 +12962,7 @@ dependencies = [
  "bytes",
  "bytesize",
  "caver-sink-parquet",
+ "caver-source-http-pull",
  "cfg-if",
  "chrono",
  "chrono-tz",

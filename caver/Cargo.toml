@@ -6,10 +6,11 @@ members = [
     "crates/caver-sink-search-peer",
     "crates/caver-ottl-funcs",
     "crates/caver-sink-parquet",
+    "crates/caver-source-http-pull",
     "crates/caver-ops",
 ]
 
 [workspace.package]
-version = "0.15.2"
+version = "0.16.0"
 edition = "2021"
 license = "MPL-2.0"
