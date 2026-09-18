@@ -106,10 +106,17 @@ jobs:
         if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # --locked: a stale committed Cargo.lock must fail here, not get
         # silently rewritten on the runner.
-        run: cargo build --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap"
+        run: cargo build --locked --no-default-features --features "sinks-caver_parquet,sources-caver_http_pull,sinks-console,sources-demo_logs,transforms-remap"
       - name: caver_parquet registered in `vector list`
         if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         run: ./target/debug/vector list | grep -w caver_parquet
+      - name: caver_http_pull registered in `vector list`
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
+        # The caver_http_pull SOURCE mirrors caver_parquet's crate+wrapper
+        # split (caver-collector#1842): a caver crate holds the OAuth/cursor/
+        # array logic, the src/ wrapper is the Vector component. Assert it
+        # registers as a real component.
+        run: ./target/debug/vector list | grep -w caver_http_pull
       - name: Config naming caver_parquet validates
         if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # Full validate (no --no-environment) so SinkConfig::build actually
@@ -157,7 +164,14 @@ jobs:
         # (src/sinks/caver_parquet) lives in the root vector workspace and was
         # otherwise never tested in CI (caver-collector#899 item 4). Reuses
         # the dependency cache from the build step above.
-        run: cargo test --locked --no-default-features --features "sinks-caver_parquet,sinks-console,sources-demo_logs,transforms-remap" --lib sinks::caver_parquet
+        run: cargo test --locked --no-default-features --features "sinks-caver_parquet,sources-caver_http_pull,sinks-console,sources-demo_logs,transforms-remap" --lib sinks::caver_parquet
+      - name: Wrapper source unit tests
+        if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
+        # The caver_http_pull wrapper (src/sources/caver_http_pull) lives in the
+        # root vector workspace, so the caver-crates job (which only builds the
+        # caver/ workspace) never sees it. Exercise its config parse/generate
+        # and OAuth env-resolution tests here. Reuses the build cache above.
+        run: cargo test --locked --no-default-features --features "sinks-caver_parquet,sources-caver_http_pull,sinks-console,sources-demo_logs,transforms-remap" --lib sources::caver_http_pull
       - name: Caver VRL adapter tests
         if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
         # The VRL adapter crate (lib/vector-vrl/caver-stdlib) and the

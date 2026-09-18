@@ -1,0 +1,19 @@
+[package]
+name = "caver-source-http-pull"
+description = "Stateful HTTP pull logic (OAuth2 client-credentials, cursor checkpoint, response-array extraction) for the caver collector"
+# Explicit (not workspace-inherited): this crate is also a path dependency of
+# the root vector workspace (sources-caver_http_pull), and cargo resolves
+# inheritance against root there. Keep version in lockstep with
+# caver/Cargo.toml workspace.package. Same pattern as caver-sink-parquet and
+# vrl-caver-stdlib.
+version = "0.16.0"
+edition = "2021"
+license = "MPL-2.0"
+
+[lib]
+name = "caver_source_http_pull"
+
+[dependencies]
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"] }
+thiserror = "1"
