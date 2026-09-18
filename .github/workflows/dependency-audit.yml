@@ -59,18 +59,35 @@ jobs:
                   return ""
 
           def pairs(text):
-              """{(name, version)} from [[package]] blocks.
+              """{(name, version)} for crates fetched FROM A REGISTRY OR GIT.
 
               Parsed by hand so the workflow needs no toml library. Kept as
               name+version pairs rather than a name->version map on purpose: a
               Cargo.lock legitimately carries the same crate at several versions
               at once, and a map silently collapses those to whichever came last.
+
+              Workspace-local (path) crates have NO `source` line in Cargo.lock.
+              They are first-party: built from this repo, reviewed in the PR diff,
+              and absent from crates.io, so upgrade-audit 404s and fails closed on
+              them. This supply-chain audit is for third-party artifacts, so those
+              are skipped. A block is emitted at its END (next [[package]] or EOF)
+              because the `source` line follows `version` inside the block.
               """
-              out, name, ver = set(), None, None
+              out = set()
+              name = ver = None
+              has_source = False
+
+              def flush():
+                  nonlocal name, ver, has_source
+                  if name and ver and has_source:
+                      out.add((name, ver))
+                  name = ver = None
+                  has_source = False
+
               for line in text.splitlines():
                   s = line.strip()
                   if s == "[[package]]":
-                      name = ver = None
+                      flush()
                       continue
                   m = re.match(r'^name\s*=\s*"([^"]+)"', s)
                   if m:
@@ -78,9 +95,9 @@ jobs:
                   m = re.match(r'^version\s*=\s*"([^"]+)"', s)
                   if m:
                       ver = m.group(1)
-                  if name and ver:
-                      out.add((name, ver))
-                      name = ver = None
+                  if re.match(r'^source\s*=\s*"', s):
+                      has_source = True
+              flush()
               return out
 
           base_text = at(BASE)
