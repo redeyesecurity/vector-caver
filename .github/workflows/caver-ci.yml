@@ -9,10 +9,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# One runner (tower-vc1 on .30) serves this workflow, and a cargo build is the
+# heaviest thing that box runs, so runs queue behind each other instead of
+# racing for the same 5 GB (caver-collector#1811 / CC-64).
+concurrency:
+  group: caver-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fork-integrity:
     name: fork integrity
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: [self-hosted, Linux, X64, vector-caver]
     steps:
       - uses: actions/checkout@v4
       - name: FORK.md exists
@@ -20,7 +27,7 @@ jobs:
 
   caver-crates:
     name: caver crates (fmt / clippy / test)
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: [self-hosted, Linux, X64, vector-caver]
     steps:
       - uses: actions/checkout@v4
       - name: Skip if no caver workspace
@@ -54,7 +61,7 @@ jobs:
   # caver_parquet sink enabled and asserts component registration.
   vector-component:
     name: vector component registration
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: [self-hosted, Linux, X64, vector-caver]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,9 +94,10 @@ jobs:
           key: vector-component
       - name: Install protoc (pinned)
         if: steps.check.outputs.skip != 'true' && steps.paths.outputs.skip != 'true'
-        # Pinned release zip instead of `brew install protobuf` so a brew
-        # formula bump can't change codegen under us, and the runner doesn't
-        # need brew write access (caver-collector#898 item 7). A protoc
+        # Pinned release zip so a distro package bump can't change codegen under
+        # us, and the runner needs no package-manager write access
+        # (caver-collector#898 item 7). Linux zip since CC-64 moved the lane to
+        # the tower runner. A protoc
         # already on the box (any source) short-circuits.
         run: |
           if command -v protoc >/dev/null 2>&1; then
@@ -97,9 +105,12 @@ jobs:
             exit 0
           fi
           curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-osx-x86_64.zip"
+            "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip"
           mkdir -p "$RUNNER_TEMP/protoc"
-          unzip -oq "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          # python3 rather than unzip: the tower runner has no unzip and needs no
+          # package for this; the stdlib module extracts the same zip.
+          python3 -m zipfile -e "$RUNNER_TEMP/protoc.zip" "$RUNNER_TEMP/protoc"
+          chmod +x "$RUNNER_TEMP/protoc/bin/protoc"
           echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/protoc/bin/protoc" --version
       - name: Build minimal vector with caver_parquet
