@@ -107,7 +107,10 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
             "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip"
           mkdir -p "$RUNNER_TEMP/protoc"
-          unzip -oq "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          # python3 rather than unzip: the tower runner has no unzip and needs no
+          # package for this; the stdlib module extracts the same zip.
+          python3 -m zipfile -e "$RUNNER_TEMP/protoc.zip" "$RUNNER_TEMP/protoc"
+          chmod +x "$RUNNER_TEMP/protoc/bin/protoc"
           echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/protoc/bin/protoc" --version
       - name: Build minimal vector with caver_parquet
