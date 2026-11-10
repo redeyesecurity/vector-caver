@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.17.0] - 2026-11-09
+
+### Added
+- **Ollama app collector payload** (`caver/apps/ollama/collector/ollama.yaml`,
+  caver-go#11124 item 3, CAVER-3555): a Vector config fragment that replaces
+  the hand-built Python collector on .188 (the closed caver-collector#2389
+  server-log transform and the Python `ollama` api_poll adapter), native
+  throughout, stock components and VRL stdlib-base only.
+  - `ollama_server_log`: a `file` source on Ollama's `server.log` and a VRL
+    remap keeping three lines with #2389's row shape. A gin request line is
+    HTTP Activity (4002) with `src_ip`, `dest_port` 11434, `http_method`,
+    `url_path`, `http_status`, `latency_ms` (Go durations via
+    `parse_duration`) and `operation` (inference | pull | api); the
+    llama-server load line is `operation=load_request` with `model_digest`;
+    the `print_info: file type` line is `operation=load_model` with
+    `quantisation` spelled the way the On-Prem Inference pack tests it
+    (`fp32`, `fp16`, `q4_k_m`, `unknown`). Every other line is dropped.
+  - `ollama_api`: two `http_client` sources on `/api/ps` (60 s) and
+    `/api/tags` (300 s), one row per model per poll: `model_running` from
+    `/api/ps`, `model_available` from `/api/tags`, with the Python adapter's
+    `ollama_*` fields plus `model_name`.
+  - Both land in `index=on_prem_inference`; `dest` is `CAVER_OLLAMA_DEST`,
+    else the host name.
+  - `lib/vector-vrl/caver-stdlib/tests/ollama_app.rs` reads both programs out
+    of the shipped YAML, compiles them against the lean function set and runs
+    them on lines and API bodies captured from the live server on .188.
+
 ## [0.16.0] - 2026-09-17
 
 ### Added

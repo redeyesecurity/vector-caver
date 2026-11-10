@@ -1,0 +1,231 @@
+# Ollama app, native collector payload (caver-go#11124 item 3, CAVER-3555).
+#
+# A Vector config fragment, not a whole pipeline: two inputs from a local
+# Ollama server, normalized in VRL, ending at two transforms a deployment's
+# sink reads by name (`inputs: ["ollama_server_log", "ollama_api"]`).
+# It replaces the hand-built Python collector on .188 (the closed
+# caver-collector#2389 transform plus the Python `ollama` api_poll adapter),
+# with the same row shapes, so the On-Prem Inference pack reads it unchanged.
+#
+#   server.log -> ollama_server_log   index=on_prem_inference sourcetype=ollama:server
+#   /api/ps    \
+#   /api/tags  -> ollama_api          index=on_prem_inference sourcetype=ollama:model
+#
+# Parameters, by environment variable (Vector interpolates them at load):
+#   CAVER_OLLAMA_SERVER_LOG  required: path to Ollama's server.log
+#                            (macOS: ~/.ollama/logs/server.log of the user
+#                            running `ollama serve`).
+#   CAVER_OLLAMA_URL         the API base, default http://127.0.0.1:11434.
+#   CAVER_OLLAMA_DEST        the `dest` (server) name on every row, default
+#                            this host's name (Vector sets HOSTNAME itself).
+#
+# Only stock components and the VRL stdlib-base functions the lean binary
+# ships. lib/vector-vrl/caver-stdlib/tests/ollama_app.rs compiles both
+# programs from this file and runs them on lines and API bodies captured
+# from the live server on .188.
+
+sources:
+  ollama_log_file:
+    type: file
+    include: ["${CAVER_OLLAMA_SERVER_LOG:?set CAVER_OLLAMA_SERVER_LOG to the Ollama server.log path}"]
+    read_from: end
+
+  ollama_ps:
+    type: http_client
+    endpoint: "${CAVER_OLLAMA_URL:-http://127.0.0.1:11434}/api/ps"
+    scrape_interval_secs: 60
+    decoding:
+      codec: json
+
+  ollama_tags:
+    type: http_client
+    endpoint: "${CAVER_OLLAMA_URL:-http://127.0.0.1:11434}/api/tags"
+    scrape_interval_secs: 300
+    decoding:
+      codec: json
+
+transforms:
+  # `ollama serve` writes one gin access-log line per HTTP request and, via
+  # the llama-server it spawns, a block of print_info lines per model load.
+  # Three lines are kept, everything else is chatter and is dropped:
+  #
+  #   [GIN] 2026/11/04 - 09:51:46 | 200 |  442.584µs |    192.168.1.18 | GET      "/api/ps"
+  #   time=... msg="loading model via llama-server" model=/Users/x/.ollama/models/blobs/sha256-13576eb6...
+  #   print_info: file type   = Q4_K - Medium
+  #
+  #   request line      -> HTTP Activity (4002): src_ip, dest_port, http_method,
+  #                        url_path, http_status, latency_ms, operation
+  #                        (inference | pull | api)
+  #   load request line -> operation=load_request, model_digest
+  #   file type line    -> operation=load_model, quantisation. llama-server
+  #                        prints it once per load, after reading the weights,
+  #                        so it is the load event the unquantised-load panel
+  #                        counts.
+  #
+  # The log carries no time zone, so time is the file source's read time.
+  ollama_server_log:
+    type: remap
+    inputs: ["ollama_log_file"]
+    drop_on_abort: true
+    source: |
+      line = to_string(.message) ?? ""
+      dest = "${CAVER_OLLAMA_DEST:-}"
+      if dest == "" { dest = "${HOSTNAME}" }
+
+      gin, gin_err = parse_regex(line, r'^\[GIN\] \S+ - \S+ \| (?P<status>\d{3}) \| +(?P<dur>(?:[\d.]+(?:ns|µs|us|ms|s|m|h))+) \| +(?P<src>\S+) \| (?P<method>[A-Z]+) +"(?P<path>[^"]*)"')
+      load, load_err = parse_regex(line, r'msg="loading model via llama-server" model=(?P<model>\S+)')
+      ftype, ftype_err = parse_regex(line, r'^print_info: file type += (?P<q>.+?)\s*$')
+
+      if gin_err == null {
+        path = to_string(gin.path)
+        parts = split(path, "?", 2)
+        bare = to_string(parts[0])
+        operation = "api"
+        if includes(["/api/generate", "/api/chat", "/api/embed", "/api/embeddings", "/v1/chat/completions", "/v1/completions", "/v1/embeddings"], bare) {
+          operation = "inference"
+        } else if bare == "/api/pull" {
+          operation = "pull"
+        }
+        status = to_int(gin.status) ?? 0
+        # Gin prints a Go duration: 442.584µs, 12.5s, 2m3s.
+        latency = round(parse_duration(to_string(gin.dur), "ms") ?? 0.0, 3)
+        src = to_string(gin.src)
+        method = to_string(gin.method)
+
+        .class_uid = 4002
+        .class_name = "HTTP Activity"
+        .category_uid = 4
+        .activity_id = 99
+        .type_uid = 400299
+        .status_id = 1
+        if status >= 400 { .status_id = 2 }
+        .severity_id = 1
+        .src_ip = src
+        .dest_port = 11434
+        .http_method = method
+        .url_path = path
+        .http_status = status
+        .latency_ms = latency
+        .operation = operation
+        .src_endpoint.ip = src
+        .dst_endpoint.port = 11434
+        .http_request.http_method = method
+        .http_request.url.path = path
+        .http_response.code = status
+      } else if load_err == null {
+        model = to_string(load.model)
+        digest, digest_err = parse_regex(model, r'sha256-(?P<d>[0-9a-f]{12,64})')
+        .class_uid = 6005
+        .class_name = "Application Activity"
+        .category_uid = 6
+        .activity_id = 1
+        .type_uid = 600501
+        .status_id = 1
+        .severity_id = 1
+        .operation = "load_request"
+        .model_digest = ""
+        if digest_err == null { .model_digest = to_string(digest.d) }
+        .model_path = model
+      } else if ftype_err == null {
+        raw_q = to_string(ftype.q)
+        # The pack tests quantisation IN ("fp32","fp16","none","") for an
+        # unquantised load, so the float types take those spellings:
+        # "Q4_K - Medium" -> q4_k_m, "F16" -> fp16, "BF16" -> bf16.
+        t = downcase(strip_whitespace(raw_q))
+        q = ""
+        if starts_with(t, "unknown") {
+          # llama-server's "unknown, may not work": a type it cannot name (gpt-oss).
+          q = "unknown"
+        } else if includes(["f32", "all f32", "float32"], t) {
+          q = "fp32"
+        } else if includes(["f16", "mostly f16", "float16"], t) {
+          q = "fp16"
+        } else {
+          t = replace(t, r'^mostly ', "")
+          size, size_err = parse_regex(t, r'^(?P<base>\S+?) - (?P<s>\w)\w*$')
+          if size_err == null {
+            q = to_string(size.base) + "_" + to_string(size.s)
+          } else {
+            q = replace(t, " ", "_")
+          }
+        }
+        .class_uid = 6005
+        .class_name = "Application Activity"
+        .category_uid = 6
+        .activity_id = 1
+        .type_uid = 600501
+        .status_id = 1
+        .severity_id = 1
+        .operation = "load_model"
+        .quantisation = q
+        .quantisation_raw = raw_q
+      } else {
+        abort
+      }
+
+      .dest = dest
+      .metadata.product.name = "Ollama"
+      .metadata.product.vendor_name = "Ollama"
+      .app.name = "ollama"
+      .index = "on_prem_inference"
+      .source = "ollama:server_log"
+      .sourcetype = "ollama:server"
+
+  # /api/ps lists the models loaded in memory, /api/tags every model on
+  # disk. One row per model per poll: operation=model_running from /api/ps
+  # (it carries expires_at and size_vram), operation=model_available from
+  # /api/tags. Field names follow the Python ollama adapter and
+  # ollama_normalize (ollama_*), plus model_name for the pack's panels.
+  ollama_api:
+    type: remap
+    inputs: ["ollama_ps", "ollama_tags"]
+    drop_on_abort: true
+    source: |
+      dest = "${CAVER_OLLAMA_DEST:-}"
+      if dest == "" { dest = "${HOSTNAME}" }
+      server_url = "${CAVER_OLLAMA_URL:-http://127.0.0.1:11434}"
+      ts = .timestamp
+      models = array(.models) ?? []
+
+      rows = map_values(models) -> |m| {
+        name = to_string(m.name) ?? ""
+        details = object(m.details) ?? {}
+        running = m.expires_at != null || m.size_vram != null
+        operation = "model_available"
+        event_type = "available"
+        if running {
+          operation = "model_running"
+          event_type = "heartbeat"
+        }
+        {
+          "timestamp": ts,
+          "class_uid": 6005,
+          "class_name": "Application Activity",
+          "category_uid": 6,
+          "activity_id": 1,
+          "type_uid": 600501,
+          "status_id": 1,
+          "severity_id": 1,
+          "dest": dest,
+          "operation": operation,
+          "model_name": name,
+          "ollama_event_type": event_type,
+          "ollama_model_name": name,
+          "ollama_server_url": server_url,
+          "ollama_model_size": to_int(m.size) ?? 0,
+          "ollama_size_vram": to_int(m.size_vram) ?? 0,
+          "ollama_model_digest": to_string(m.digest) ?? "",
+          "ollama_expires_at": to_string(m.expires_at) ?? "",
+          "ollama_modified_at": to_string(m.modified_at) ?? "",
+          "ollama_family": to_string(details.family) ?? "",
+          "ollama_param_size": to_string(details.parameter_size) ?? "",
+          "ollama_quant": to_string(details.quantization_level) ?? "",
+          "metadata": {"product": {"name": "Ollama", "vendor_name": "Ollama"}},
+          "app": {"name": "ollama"},
+          "index": "on_prem_inference",
+          "source": "ollama:api",
+          "sourcetype": "ollama:model"
+        }
+      }
+      # One event per row; an empty list emits nothing.
+      . = filter(rows) -> |_i, r| { r.model_name != "" }
