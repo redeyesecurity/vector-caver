@@ -13,3 +13,7 @@ vrl.workspace = true
 # caver/ workspace, shared with non-Vector consumers. This crate is only
 # the `vrl::compiler::Function` adapter layer around it.
 vrl-caver-stdlib = { path = "../../../caver/crates/vrl-caver-stdlib" }
+
+[dev-dependencies]
+# tests/ollama_app.rs reads the remap programs out of the shipped app YAML.
+serde_yaml.workspace = true

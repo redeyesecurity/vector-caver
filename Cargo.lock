@@ -13477,6 +13477,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde_json",
+ "serde_yaml",
  "vrl",
  "vrl-caver-stdlib",
 ]
